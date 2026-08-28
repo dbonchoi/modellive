@@ -93,10 +93,12 @@ export class PageActions {
    * Smart check: Detects if notebook is running, stopped, or disconnected, and performs necessary recovery.
    * @param {import('playwright-core').Page} page
    * @param {object} notebookConfig
+   * @param {object} [scheduleConfig={}]
    */
-  static async smartCheckAndAct(page, notebookConfig) {
+  static async smartCheckAndAct(page, notebookConfig, scheduleConfig = {}) {
     let restarted = false;
     let statusDesc = 'Running';
+    const allowLaunch = notebookConfig.autoStart === true || scheduleConfig.forceStart === true;
 
     // 1. Check if captcha modal is already open
     const existingCaptcha = await this.checkAndCaptureCaptcha(page);
@@ -108,13 +110,18 @@ export class PageActions {
     // 2. Check if "选择实例" modal (Ant Design Modal) is ALREADY OPEN on screen
     const isModalOpen = await this.isSelectInstanceModalOpen(page);
     if (isModalOpen) {
-      logger.info(`[${notebookConfig.name}] '选择实例' modal dialog is already open. Proceeding to select & connect...`);
+      if (!allowLaunch) {
+        logger.info(`[${notebookConfig.name}] '选择实例' modal is open, but autoStart is false. Waiting for /start command.`);
+        return { restarted: false, statusDesc: 'Ready to connect (Send /start in Feishu)' };
+      }
+
+      logger.info(`[${notebookConfig.name}] '选择实例' modal dialog is open. Proceeding to select & connect...`);
       const modalRes = await this.handleSelectInstanceModal(page, notebookConfig);
       restarted = true;
       if (modalRes.captchaBuffer) {
         return { restarted: true, statusDesc: 'Captcha Verification Required', captchaBuffer: modalRes.captchaBuffer };
       }
-      statusDesc = modalRes.success ? 'Runtime instance connected' : 'Handled select instance modal';
+      statusDesc = modalRes.success ? 'Runtime instance connected' : 'Connecting instance...';
       return { restarted, statusDesc };
     }
 
@@ -130,6 +137,11 @@ export class PageActions {
       try {
         const btn = await page.$(sel);
         if (btn && (await btn.isVisible())) {
+          if (!allowLaunch) {
+            logger.info(`[${notebookConfig.name}] Found '连接运行时' button, but autoStart is false. Waiting for /start command.`);
+            return { restarted: false, statusDesc: 'Disconnected (Send /start in Feishu)' };
+          }
+
           logger.warn(`[${notebookConfig.name}] Detected '连接运行时' button in Code Editor. Clicking to launch instance...`);
           await page.evaluate(el => el.click(), btn).catch(async () => {
             await btn.click({ force: true, timeout: 3000 });
@@ -144,7 +156,7 @@ export class PageActions {
             return { restarted: true, statusDesc: 'Captcha Verification Required', captchaBuffer: modalRes.captchaBuffer };
           }
 
-          statusDesc = modalRes.success ? 'Runtime instance connected' : 'Clicked connect runtime';
+          statusDesc = modalRes.success ? 'Runtime instance connected' : 'Connecting instance...';
           return { restarted, statusDesc };
         }
       } catch (err) {
@@ -180,7 +192,7 @@ export class PageActions {
     }
 
     // 5. If on workspace list page, check if specific instance is stopped
-    if (notebookConfig.autoStart) {
+    if (allowLaunch) {
       const startBtnSelectors = [
         'button:has-text("启动")',
         'button:has-text("开启")',
@@ -221,9 +233,9 @@ export class PageActions {
     try {
       const modalSelectors = [
         'div:has-text("选择实例")',
-        'button:has-text("连接")',
         '.antd5-modal-title:has-text("选择实例")',
         'div[role="dialog"]:has-text("选择实例")',
+        '.antd5-modal-content:has-text("选择实例")',
       ];
       for (const sel of modalSelectors) {
         const el = await page.$(sel);
@@ -247,58 +259,74 @@ export class PageActions {
     try {
       logger.info(`[${notebookConfig.name}] Handling '选择实例' modal...`);
 
+      const modal = await page.$('.antd5-modal-content, .ant-modal-content, div[role="dialog"]');
+      if (!modal) {
+        logger.warn(`[${notebookConfig.name}] Modal container element not found.`);
+        return { success: false };
+      }
+
       // Check instance type preference (e.g., 'GPU', 'AMD GPU', 'CPU')
       const targetType = (notebookConfig.instanceType || 'CPU').toUpperCase();
-      if (targetType.includes('GPU') && !targetType.includes('AMD')) {
-        const gpuTab = await page.$('div:has-text("GPU 类型"), button:has-text("GPU 类型"), span:has-text("GPU 类型")');
-        if (gpuTab && (await gpuTab.isVisible())) {
-          logger.info(`[${notebookConfig.name}] Selecting GPU instance tab...`);
-          await page.evaluate(el => el.click(), gpuTab).catch(() => gpuTab.click({ force: true }));
-          await this.sleep(500);
-        }
-      } else if (targetType.includes('AMD')) {
-        const amdTab = await page.$('div:has-text("AMD GPU类型"), button:has-text("AMD GPU类型"), span:has-text("AMD GPU类型")');
-        if (amdTab && (await amdTab.isVisible())) {
-          logger.info(`[${notebookConfig.name}] Selecting AMD GPU instance tab...`);
-          await page.evaluate(el => el.click(), amdTab).catch(() => amdTab.click({ force: true }));
-          await this.sleep(500);
-        }
-      } else if (targetType.includes('CPU')) {
-        const cpuTab = await page.$('div:has-text("CPU 类型"), button:has-text("CPU 类型"), span:has-text("CPU 类型")');
-        if (cpuTab && (await cpuTab.isVisible())) {
-          logger.info(`[${notebookConfig.name}] Selecting CPU instance tab...`);
-          await page.evaluate(el => el.click(), cpuTab).catch(() => cpuTab.click({ force: true }));
-          await this.sleep(500);
+      const allTabs = await modal.$$('.antd5-segmented-item, .ant-segmented-item, div, span, button');
+      for (const tab of allTabs) {
+        try {
+          const text = (await tab.innerText()).trim();
+          if (targetType.includes('GPU') && !targetType.includes('AMD') && text.includes('GPU 类型')) {
+            logger.info(`[${notebookConfig.name}] Selecting GPU instance tab...`);
+            await tab.click({ force: true }).catch(() => {});
+            await this.sleep(500);
+            break;
+          } else if (targetType.includes('AMD') && text.includes('AMD GPU')) {
+            logger.info(`[${notebookConfig.name}] Selecting AMD GPU instance tab...`);
+            await tab.click({ force: true }).catch(() => {});
+            await this.sleep(500);
+            break;
+          } else if (targetType.includes('CPU') && text.includes('CPU 类型')) {
+            logger.info(`[${notebookConfig.name}] Selecting CPU instance tab...`);
+            await tab.click({ force: true }).catch(() => {});
+            await this.sleep(500);
+            break;
+          }
+        } catch {
+          // continue
         }
       }
 
-      // Click the confirmation "连接" (Connect) button in the modal
-      const confirmConnectSelectors = [
-        'div[role="dialog"] button:has-text("连接")',
-        '.antd5-modal button:has-text("连接")',
-        'button.antd5-btn-primary:has-text("连接")',
-        'button.ant-btn-primary:has-text("连接")',
-        'button:has-text("连接")',
-      ];
-
-      for (const cSel of confirmConnectSelectors) {
-        const confirmBtn = await page.$(cSel);
-        if (confirmBtn && (await confirmBtn.isVisible())) {
-          logger.info(`[${notebookConfig.name}] Clicking modal confirmation button '连接'...`);
-          await page.evaluate(el => el.click(), confirmBtn).catch(async () => {
-            await confirmBtn.click({ force: true, timeout: 5000 });
-          });
-          await this.sleep(2500);
-
-          // Check if captcha appeared
-          const cap = await this.checkAndCaptureCaptcha(page);
-          if (cap.buffer) {
-            logger.warn(`[${notebookConfig.name}] Security captcha popup appeared after clicking connect!`);
-            return { success: false, captchaBuffer: cap.buffer };
+      // Find the EXACT "连接" button inside the modal
+      let confirmBtn = null;
+      const buttons = await modal.$$('button');
+      for (const b of buttons) {
+        try {
+          const btnText = (await b.innerText()).trim();
+          // STRICT exact text match for "连接"
+          if (btnText === '连接') {
+            confirmBtn = b;
+            break;
           }
-
-          return { success: true };
+        } catch {
+          // continue
         }
+      }
+
+      if (!confirmBtn) {
+        confirmBtn = await modal.$('button.antd5-btn-primary, button.ant-btn-primary');
+      }
+
+      if (confirmBtn) {
+        logger.info(`[${notebookConfig.name}] Clicking modal confirmation button '连接'...`);
+        await confirmBtn.click({ force: true, timeout: 5000 });
+        await this.sleep(2500);
+
+        // Check if captcha appeared
+        const cap = await this.checkAndCaptureCaptcha(page);
+        if (cap.buffer) {
+          logger.warn(`[${notebookConfig.name}] Security captcha popup appeared after clicking connect!`);
+          return { success: false, captchaBuffer: cap.buffer };
+        }
+
+        return { success: true };
+      } else {
+        logger.warn(`[${notebookConfig.name}] Could not locate exact '连接' button inside modal.`);
       }
 
       return { success: false };

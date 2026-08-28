@@ -78,7 +78,7 @@ export class MessageHandler {
           if (this.scheduler.config.notebooks.length > 0) {
             this.scheduler.config.notebooks[0].instanceType = instanceType;
           }
-          const result = await this.scheduler.runRound();
+          const result = await this.scheduler.runRound(null, { forceStart: true });
           const card = CardTemplates.buildStatusCard(result.summary);
           await this.notifier.sendCard(card, targetId);
         } catch (err) {

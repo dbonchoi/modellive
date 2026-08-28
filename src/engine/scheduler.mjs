@@ -62,9 +62,10 @@ export class Scheduler {
   /**
    * Run a single keepalive round across all active notebooks.
    * @param {string} [specificId]
+   * @param {object} [extraScheduleOptions={}]
    * @returns {Promise<{ total: number, succeeded: number, failed: number, results: any[] }>}
    */
-  async runRound(specificId = null) {
+  async runRound(specificId = null, extraScheduleOptions = {}) {
     const notebooks = this.config.notebooks.filter(nb => nb && nb.enabled !== false);
     const targetNotebooks = specificId
       ? notebooks.filter(nb => nb.id === specificId)
@@ -80,7 +81,7 @@ export class Scheduler {
     logger.engine(`=== Starting Keepalive Round #${roundNumber} (${targetNotebooks.length} notebooks) ===`);
 
     const results = [];
-    const scheduleConfig = this.config.schedule || {};
+    const scheduleConfig = { ...(this.config.schedule || {}), ...(extraScheduleOptions || {}) };
     const perUrlDelayMs = (scheduleConfig.perUrlDelaySeconds || 5) * 1000;
 
     for (let i = 0; i < targetNotebooks.length; i += 1) {

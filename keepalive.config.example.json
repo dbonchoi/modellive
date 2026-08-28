@@ -33,7 +33,7 @@
       "matchPattern": "workspace",
       "instanceType": "GPU",
       "action": "smart",
-      "autoStart": true,
+      "autoStart": false,
       "enabled": true
     },
     {
