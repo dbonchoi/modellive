@@ -62,6 +62,35 @@ export class MessageHandler {
         break;
       }
 
+      case '/start':
+      case 'start':
+      case '/connect':
+      case 'connect':
+      case '启动':
+      case '连接': {
+        const instanceType = args[0] ? args[0].toUpperCase() : 'CPU';
+        await this.notifier.sendCard(
+          CardTemplates.buildResultCard('启动实例指令', `收到启动指令，正在尝试连接【${instanceType}】实例...`, true),
+          targetId
+        );
+
+        try {
+          // Temporarily set or ensure instanceType on first notebook
+          if (this.scheduler.config.notebooks.length > 0) {
+            this.scheduler.config.notebooks[0].instanceType = instanceType;
+          }
+          const result = await this.scheduler.runRound();
+          const card = CardTemplates.buildStatusCard(result.summary);
+          await this.notifier.sendCard(card, targetId);
+        } catch (err) {
+          await this.notifier.sendCard(
+            CardTemplates.buildResultCard('启动实例失败', err.message, false),
+            targetId
+          );
+        }
+        break;
+      }
+
       case '/login':
       case 'login':
       case '登录':

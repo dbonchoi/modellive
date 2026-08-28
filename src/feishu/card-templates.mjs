@@ -201,7 +201,7 @@ export class CardTemplates {
           tag: 'div',
           text: {
             tag: 'lark_md',
-            content: `**可用指令列表**：\n\n• \`/status\` 或 \`状态\`：查看所有 Notebook 实例的保活健康度\n• \`/refresh\` 或 \`保活\`：立即执行一次全量保活刷新\n• \`/login\` 或 \`登录\`：获取最新 ModelScope 登录二维码进行扫码登录\n• \`/cookie <cookie内容>\`：手动更新注入浏览器 Cookie\n• \`/logs\` 或 \`日志\`：获取最近运行日志\n• \`/help\` 或 \`帮助\`：查看此帮助说明`,
+            content: `**可用指令列表**：\n\n• \`/status\` 或 \`状态\`：查看所有 Notebook 实例的保活健康度\n• \`/refresh\` 或 \`保活\`：立即执行一次全量保活刷新\n• \`/start [CPU|GPU|AMD]\` 或 \`启动\`：远程连接并启动指定的实例类型（默认 CPU）\n• \`/login\` 或 \`登录\`：获取最新 ModelScope 微信登录二维码进行扫码\n• \`/cookie <cookie内容>\`：手动更新注入浏览器 Cookie\n• \`/logs\` 或 \`日志\`：获取最近运行日志\n• \`/help\` 或 \`帮助\`：查看此帮助说明`,
           },
         },
       ],
