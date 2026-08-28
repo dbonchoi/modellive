@@ -708,31 +708,123 @@ export class PageActions {
   }
 
   /**
+   * Check if a ModelScope notebook instance is already active / running.
+   * @param {import('playwright-core').Page} page
+   * @returns {Promise<boolean>}
+   */
+  static async isInstanceRunning(page) {
+    try {
+      // 1. If connect button is visible, instance is NOT running
+      const connectBtn = await page.$('button:has-text("连接运行时"), div[role="button"]:has-text("连接运行时"), a:has-text("连接运行时")');
+      if (connectBtn && (await connectBtn.isVisible())) {
+        return false;
+      }
+
+      // 2. If instance select modal or captcha modal is open, instance is NOT running
+      const isModal = await this.isSelectInstanceModalOpen(page);
+      if (isModal) {
+        return false;
+      }
+      const cap = await this.checkAndCaptureCaptcha(page);
+      if (cap.visible) {
+        return false;
+      }
+
+      // 3. If disconnected or reconnect prompts are visible, instance is NOT running
+      const resumeBtn = await page.$('button:has-text("重新连接"), button:has-text("恢复运行"), button:has-text("继续使用"), button:has-text("启动")');
+      if (resumeBtn && (await resumeBtn.isVisible())) {
+        return false;
+      }
+
+      // 4. Check if page contains active workspace indicators
+      const activeSelectors = [
+        'div:has-text("CPU")',
+        'div:has-text("GPU")',
+        'span:has-text("CPU")',
+        'span:has-text("GPU")',
+        'div[class*="editor"]',
+        'div[class*="workspace"]',
+        'div[class*="terminal"]',
+      ];
+
+      for (const sel of activeSelectors) {
+        try {
+          const el = await page.$(sel);
+          if (el && (await el.isVisible())) {
+            return true;
+          }
+        } catch {}
+      }
+
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Refresh captcha image on the verification modal
    * @param {import('playwright-core').Page} page
    */
   static async refreshCaptcha(page) {
     try {
+      logger.info('Attempting to refresh captcha image in browser...');
+      const frames = [page, ...page.frames()];
+
       const refreshSelectors = [
-        'div:has-text("请完成安全验证") svg',
-        'div:has-text("请完成安全验证") div[class*="refresh"]',
-        'div:has-text("请完成安全验证") span[class*="refresh"]',
+        '#nc_1_refresh1',
+        'a.btn_refresh',
+        '.btn_refresh',
+        'a.nc_iconfont.btn_refresh',
         '.nc_iconfont_refresh',
+        '[class*="btn_refresh"]',
         '[class*="refresh"]',
+        'a[class*="refresh"]',
+        'span[class*="refresh"]',
+        'div[class*="refresh"]',
         'svg[class*="refresh"]',
       ];
-      for (const sel of refreshSelectors) {
-        try {
-          const el = await page.$(sel);
-          if (el && (await el.isVisible())) {
-            await page.evaluate(e => e.click(), el).catch(() => el.click());
-            await this.sleep(1500);
-            return await this.checkAndCaptureCaptcha(page);
-          }
-        } catch {}
+
+      for (const frame of frames) {
+        for (const sel of refreshSelectors) {
+          try {
+            const els = await frame.$$(sel);
+            for (const el of els) {
+              if (await el.isVisible()) {
+                const box = await el.boundingBox();
+                if (box && box.width > 5 && box.height > 5) {
+                  logger.info(`Clicking refresh button: ${sel} at (${box.x.toFixed(1)}, ${box.y.toFixed(1)})`);
+                  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                  await this.sleep(400);
+                  await frame.evaluate(e => {
+                    e.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                  }, el).catch(() => {});
+                  await this.sleep(1500);
+                  return await this.checkAndCaptureCaptcha(page);
+                }
+              }
+            }
+          } catch {}
+        }
       }
+
+      // If specific selector not found, find captcha image modal and click top-right icon area
+      const modal = await page.$('.nc-container, .nc_scale, .antd5-modal-content, div[role="dialog"]');
+      if (modal) {
+        const box = await modal.boundingBox();
+        if (box) {
+          const clickX = box.x + box.width - 24;
+          const clickY = box.y + 24;
+          logger.info(`Clicking top-right refresh area: (${clickX.toFixed(1)}, ${clickY.toFixed(1)})`);
+          await page.mouse.click(clickX, clickY);
+          await this.sleep(1500);
+          return await this.checkAndCaptureCaptcha(page);
+        }
+      }
+
       return await this.checkAndCaptureCaptcha(page);
-    } catch {
+    } catch (err) {
+      logger.warn(`Refresh captcha error: ${err.message}`);
       return { visible: false, buffer: null };
     }
   }

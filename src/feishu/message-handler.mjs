@@ -71,6 +71,20 @@ export class MessageHandler {
       case '启动':
       case '连接': {
         const instanceType = args[0] ? args[0].toUpperCase() : 'CPU';
+
+        // 1. Check if instance is already active and running
+        try {
+          const page = await this.browserManager.getPrimaryPage();
+          const alreadyRunning = await PageActions.isInstanceRunning(page);
+          if (alreadyRunning) {
+            await this.notifier.sendCard(
+              CardTemplates.buildResultCard('实例已在运行中', '✅ 当前实例已处于连接运行状态，无需重复启动。保活心跳正常进行中。', true),
+              targetId
+            );
+            break;
+          }
+        } catch {}
+
         await this.notifier.sendCard(
           CardTemplates.buildResultCard('启动实例指令', `收到启动指令，正在尝试连接【${instanceType}】实例...`, true),
           targetId
