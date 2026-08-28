@@ -38,6 +38,7 @@ export const DEFAULT_CONFIG = {
       enabled: true,
     },
   ],
+  loginProvider: 'csdn',
   pidFile: '',
   logFile: '',
 };
@@ -152,6 +153,7 @@ export async function loadConfig(customConfigPath, cliArgs = {}) {
       : (fileConfig.urls && Array.isArray(fileConfig.urls)
           ? fileConfig.urls.map((url, i) => ({ id: `nb-${i + 1}`, name: `Notebook-${i + 1}`, url, action: 'smart', autoStart: true, enabled: true }))
           : DEFAULT_CONFIG.notebooks),
+    loginProvider: fileConfig.loginProvider || DEFAULT_CONFIG.loginProvider || 'csdn',
     pidFile: fileConfig.pidFile || DEFAULT_CONFIG.pidFile,
     logFile: fileConfig.logFile || DEFAULT_CONFIG.logFile,
   };

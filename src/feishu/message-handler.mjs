@@ -95,7 +95,8 @@ export class MessageHandler {
       case 'login':
       case '登录':
       case '重新登录': {
-        await this.triggerLoginQRCodeFlow(targetId);
+        const provider = args[0] ? args[0].toLowerCase() : (this.scheduler?.config?.loginProvider || 'csdn');
+        await this.triggerLoginQRCodeFlow(targetId, provider);
         break;
       }
 
@@ -185,7 +186,8 @@ export class MessageHandler {
       }
 
       case 'trigger_login': {
-        await this.triggerLoginQRCodeFlow(senderId);
+        const provider = actionData.provider || this.scheduler?.config?.loginProvider || 'csdn';
+        await this.triggerLoginQRCodeFlow(senderId, provider);
         break;
       }
 
@@ -240,20 +242,23 @@ export class MessageHandler {
   }
 
   /**
-   * Capture and push login QR code.
+   * Capture and push login QR code for specific provider.
+   * @param {string} senderId
+   * @param {'csdn' | 'github' | 'default'} [provider='csdn']
    */
-  async triggerLoginQRCodeFlow(senderId) {
+  async triggerLoginQRCodeFlow(senderId, provider = 'csdn') {
     try {
+      const providerName = provider === 'csdn' ? 'CSDN 扫码' : (provider === 'github' ? 'GitHub' : 'ModelScope 账号');
       await this.notifier.sendCard(
-        CardTemplates.buildResultCard('正在获取二维码', '正在连接浏览器并打开 ModelScope 登录页面...', true),
+        CardTemplates.buildResultCard('正在获取二维码', `正在连接浏览器并打开 ModelScope【${providerName}】登录页面...`, true),
         senderId
       );
 
       const page = await this.browserManager.getPrimaryPage();
-      const qrResult = await AuthDetector.captureLoginQRCode(page);
+      const qrResult = await AuthDetector.captureLoginQRCode(page, provider);
 
       if (qrResult.buffer) {
-        await this.notifier.sendLoginQRCode(qrResult.buffer, senderId);
+        await this.notifier.sendLoginQRCode(qrResult.buffer, senderId, qrResult.providerUsed);
       } else {
         await this.notifier.sendCard(
           CardTemplates.buildResultCard('获取二维码失败', qrResult.error || '未能抓取到登录二维码，请检查本地 Chrome 状态。', false),

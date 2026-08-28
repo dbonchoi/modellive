@@ -116,13 +116,13 @@ export class FeishuNotifier {
   /**
    * Send QR code login card with uploaded image buffer.
    */
-  async sendLoginQRCode(imageBuffer, receiveId = null) {
+  async sendLoginQRCode(imageBuffer, receiveId = null, provider = 'csdn') {
     const imageKey = await this.uploadImage(imageBuffer);
     if (!imageKey) {
       return await this.sendAlert('登录二维码获取失败', '未能将登录二维码上传至飞书，请在本地电脑屏幕中完成登录。');
     }
 
-    const card = CardTemplates.buildLoginQrCard(imageKey);
+    const card = CardTemplates.buildLoginQrCard(imageKey, provider);
     return await this.sendCard(card, receiveId);
   }
 }
