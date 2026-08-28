@@ -48,7 +48,7 @@ export class FeishuWSClient {
         'card.action.trigger': async (data) => {
           try {
             const action = data.action?.value || {};
-            const senderId = data.open_id;
+            const senderId = data.open_id || data.operator?.open_id || data.user_id || (this.config.feishu?.adminUserIds?.[0]) || null;
             logger.feishu(`Received card action click from ${senderId}: ${JSON.stringify(action)}`);
             await this.messageHandler.handleCardAction(action, senderId);
             return { toast: { type: 'info', content: '指令已提交处理' } };

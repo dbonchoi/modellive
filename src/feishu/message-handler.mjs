@@ -1,6 +1,7 @@
 import logger from '../logger.mjs';
 import { CardTemplates } from './card-templates.mjs';
 import { AuthDetector } from '../cdp/auth-detector.mjs';
+import { PageActions } from '../cdp/page-actions.mjs';
 import { stateStore } from '../engine/state-store.mjs';
 
 /**
