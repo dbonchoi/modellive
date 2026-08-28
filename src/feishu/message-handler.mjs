@@ -80,8 +80,10 @@ export class MessageHandler {
           }
           const result = await this.scheduler.runRound(null, { forceStart: true });
           
-          const hasCaptcha = result.results?.some(r => r.error === 'Captcha verification required' || r.status?.includes('Captcha'));
-          if (!hasCaptcha) {
+          const captchaResult = result.results?.find(r => r.captchaBuffer || r.error === 'Captcha verification required');
+          if (captchaResult && captchaResult.captchaBuffer) {
+            await this.notifier.sendCaptchaCard(captchaResult.captchaBuffer, targetId, '检测到实例连接安全验证（拼图缺口/旋转还原），请在下方进行滑块拖动：');
+          } else {
             const card = CardTemplates.buildStatusCard(result.summary);
             await this.notifier.sendCard(card, targetId);
           }

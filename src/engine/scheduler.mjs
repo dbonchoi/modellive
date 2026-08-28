@@ -112,7 +112,7 @@ export class Scheduler {
         if (actionResult.captchaBuffer) {
           stateStore.recordFailure(nb.id, 'Captcha verification required', actionResult.durationMs);
           this.emit('captchaRequired', { notebook: nb, buffer: actionResult.captchaBuffer, page });
-          results.push({ id: nb.id, ok: false, error: 'Captcha verification required' });
+          results.push({ id: nb.id, ok: false, error: 'Captcha verification required', captchaBuffer: actionResult.captchaBuffer });
         } else if (actionResult.success) {
           stateStore.recordSuccess(nb.id, actionResult);
           results.push({ id: nb.id, ok: true, ...actionResult });
