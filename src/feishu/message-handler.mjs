@@ -85,8 +85,39 @@ export class MessageHandler {
           }
         } catch {}
 
-        const nb = this.scheduler.config.notebooks?.[0] || { name: 'ModelScope工作空间', url: 'https://www.modelscope.cn/code/workspace' };
-        await this.notifier.sendLaunchPrompt(nb.name, nb.url, targetId);
+        await this.notifier.sendCard(
+          CardTemplates.buildResultCard('正在唤起实例连接', `收到启动指令，正在电脑端点击【连接运行时】并选择【${instanceType}】实例...`, true),
+          targetId
+        );
+
+        try {
+          if (this.scheduler.config.notebooks?.length > 0) {
+            this.scheduler.config.notebooks[0].instanceType = instanceType;
+          }
+          const result = await this.scheduler.runRound(null, { forceStart: true });
+          
+          const captchaResult = result.results?.find(r => r.captchaBuffer || r.error === 'Captcha verification required');
+          if (captchaResult && captchaResult.captchaBuffer) {
+            await this.notifier.sendCaptchaCard(
+              captchaResult.captchaBuffer,
+              targetId,
+              '已在电脑端唤起验证码！请点击下方按钮打开微调面板或使用离散滑块：'
+            );
+          } else if (result.succeeded > 0) {
+            await this.notifier.sendText(
+              `🎉 ModelScope 实例连接成功！PC 守护进程已自动无缝接管 24/7 全自动保活！`,
+              targetId
+            );
+          } else {
+            const nb = this.scheduler.config.notebooks?.[0] || { name: 'ModelScope工作空间', url: 'https://www.modelscope.cn/code/workspace' };
+            await this.notifier.sendLaunchPrompt(nb.name, nb.url, targetId);
+          }
+        } catch (err) {
+          await this.notifier.sendCard(
+            CardTemplates.buildResultCard('启动实例异常', err.message, false),
+            targetId
+          );
+        }
         break;
       }
 
@@ -287,6 +318,13 @@ export class MessageHandler {
             },
           ],
         }, senderId);
+        break;
+      }
+
+      case 'view_status': {
+        const summary = stateStore.getSummary();
+        const card = CardTemplates.buildStatusCard(summary);
+        await this.notifier.sendCard(card, senderId);
         break;
       }
 
