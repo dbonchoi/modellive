@@ -290,6 +290,37 @@ export class CardTemplates {
       ],
     };
   }
+  /**
+   * Build image message card with title and text.
+   * @param {string} imageKey
+   * @param {string} title
+   * @param {string} message
+   * @param {string} [color='blue']
+   */
+  static buildImageCard(imageKey, title, message, color = 'blue') {
+    return {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { tag: 'plain_text', content: title },
+        template: color,
+      },
+      elements: [
+        {
+          tag: 'img',
+          img_key: imageKey,
+          alt: { tag: 'plain_text', content: title },
+          mode: 'fit_horizontal',
+        },
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: message,
+          },
+        },
+      ],
+    };
+  }
 }
 
 export default CardTemplates;

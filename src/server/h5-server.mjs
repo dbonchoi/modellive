@@ -178,12 +178,23 @@ export class H5Server {
 
         if (dragResult.success) {
           this.currentCaptchaBuffer = null;
-          // Notify Feishu
-          if (this.notifier) {
-            this.notifier.sendText(
-              '🎉 ModelScope 实例已在手机 H5 端完成验证并成功连接运行！',
-              this.notifier.config?.feishu?.adminUserIds?.[0]
-            ).catch(() => {});
+          // Send post-drag success feedback to Feishu with screenshot
+          if (this.notifier && this.notifier.enabled) {
+            const targetUser = this.notifier.config?.feishu?.adminUserIds?.[0];
+            if (dragResult.postDragBuffer) {
+              await this.notifier.sendImageCard(
+                dragResult.postDragBuffer,
+                `✅ 电脑端滑动执行完成 (设定值: ${percent.toFixed(1)}%)`,
+                `🎉 **验证通过**！滑块已准确拖拽到位，ModelScope 实例已成功连接运行！`,
+                targetUser,
+                'green'
+              ).catch(() => {});
+            } else {
+              await this.notifier.sendText(
+                `🎉 电脑端滑动验证通过 (${percent.toFixed(1)}%)！ModelScope 实例连接成功！`,
+                targetUser
+              ).catch(() => {});
+            }
           }
           // Resume scheduler
           if (this.scheduler) {
@@ -196,6 +207,19 @@ export class H5Server {
             message: '🎉 验证通过！ModelScope 实例连接成功！',
           }));
         } else {
+          // Failed: send post-drag screenshot to Feishu so user can see actual alignment in Chrome
+          if (this.notifier && this.notifier.enabled) {
+            const targetUser = this.notifier.config?.feishu?.adminUserIds?.[0];
+            const feedbackImg = dragResult.postDragBuffer || dragResult.newCaptchaBuffer;
+            if (feedbackImg) {
+              await this.notifier.sendCaptchaCard(
+                feedbackImg,
+                targetUser,
+                `⚠️ 电脑端已滑动至 **${percent.toFixed(1)}%**，但验证未通过。\n📸 **上图为电脑端实际拖拽落点**，请根据落点微调后在手机 H5 上再次尝试：`
+              ).catch(() => {});
+            }
+          }
+
           let newImage = null;
           if (dragResult.newCaptchaBuffer) {
             this.currentCaptchaBuffer = dragResult.newCaptchaBuffer;
@@ -204,7 +228,7 @@ export class H5Server {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             success: false,
-            message: '验证未通过，请在手机上微调滑动位置后再次点击提交。',
+            message: '验证未通过，电脑端实际落点已同步发送至飞书。请在手机上微调后再次提交。',
             newImageBase64: newImage,
           }));
         }

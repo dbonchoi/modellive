@@ -1,5 +1,4 @@
 import logger from '../logger.mjs';
-import { GeminiSolver } from '../services/gemini-solver.mjs';
 
 /**
  * Executes keepalive actions on a specific ModelScope Notebook page.
@@ -39,15 +38,32 @@ export class PageActions {
         await page.goto(notebookConfig.url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
       }
 
+      // Check instance running status
+      const running = await this.isInstanceRunning(page);
+      if (running) {
+        logger.info(`[${notebookConfig.name}] Instance is already running and connected.`);
+        return {
+          success: true,
+          action,
+          status: 'Running',
+          durationMs: Date.now() - startedAt,
+          restarted: false,
+        };
+      }
+
       let restarted = false;
-      let statusDesc = 'OK';
+      let statusDesc = 'Running';
       let captchaBuffer = null;
 
       if (action === 'refresh') {
-        logger.cdp(`[${notebookConfig.name}] Reloading page...`);
+        logger.cdp(`[${notebookConfig.name}] Refreshing page...`);
         await page.reload({ waitUntil: 'domcontentloaded', timeout: timeoutMs });
         statusDesc = 'Page reloaded';
-      } else if (action === 'interact') {
+      } else if (action === 'click_terminal') {
+        logger.cdp(`[${notebookConfig.name}] Focusing terminal...`);
+        await this.focusTerminal(page);
+        statusDesc = 'Terminal focused';
+      } else if (action === 'simulate_user') {
         logger.cdp(`[${notebookConfig.name}] Simulating user interaction...`);
         await this.simulateUserActivity(page);
         statusDesc = 'Activity simulated';
@@ -92,10 +108,11 @@ export class PageActions {
   }
 
   /**
-   * Smart check: Detects if notebook is running, stopped, or disconnected, and performs necessary recovery.
+   * Smart check: checks notebook kernel status, terminal, or reconnect buttons.
    * @param {import('playwright-core').Page} page
    * @param {object} notebookConfig
    * @param {object} [scheduleConfig={}]
+   * @returns {Promise<{ restarted: boolean, statusDesc: string, captchaBuffer?: Buffer }>}
    */
   static async smartCheckAndAct(page, notebookConfig, scheduleConfig = {}) {
     let restarted = false;
@@ -106,15 +123,6 @@ export class PageActions {
     const existingCaptcha = await this.checkAndCaptureCaptcha(page);
     if (existingCaptcha.buffer) {
       logger.warn(`[${notebookConfig.name}] Security verification / captcha modal is currently open.`);
-      if (scheduleConfig.gemini && scheduleConfig.gemini.enabled) {
-        const aiRes = await this.autoSolveWithGemini(page, existingCaptcha.rawBuffer || existingCaptcha.buffer, scheduleConfig.gemini);
-        if (aiRes.solved) {
-          return { restarted: true, statusDesc: 'Runtime instance connected (Gemini Auto-Solved)' };
-        }
-        if (aiRes.newCaptchaBuffer) {
-          return { restarted: false, statusDesc: 'Captcha Verification Required', captchaBuffer: aiRes.newCaptchaBuffer };
-        }
-      }
       return { restarted: false, statusDesc: 'Captcha Verification Required', captchaBuffer: existingCaptcha.buffer };
     }
 
@@ -332,18 +340,7 @@ export class PageActions {
         // Check if captcha appeared
         const cap = await this.checkAndCaptureCaptcha(page);
         if (cap.buffer) {
-          logger.warn(`[${notebookConfig.name}] Security captcha popup appeared after clicking connect!`);
-
-          if (scheduleConfig.gemini && scheduleConfig.gemini.enabled) {
-            const aiRes = await this.autoSolveWithGemini(page, cap.rawBuffer || cap.buffer, scheduleConfig.gemini);
-            if (aiRes.solved) {
-              return { success: true };
-            }
-            if (aiRes.newCaptchaBuffer) {
-              return { success: false, captchaBuffer: aiRes.newCaptchaBuffer };
-            }
-          }
-
+          logger.warn(`[${notebookConfig.name}] Security captcha popup appeared after clicking connect! Ready for H5 / Feishu slide.`);
           return { success: false, captchaBuffer: cap.buffer };
         }
 
@@ -357,41 +354,6 @@ export class PageActions {
       logger.warn(`Error handling select instance modal: ${err.message}`);
       return { success: false };
     }
-  }
-
-  /**
-   * Automatically analyze and solve captcha using Gemini 3.7 Flash via agy CLI.
-   * @param {import('playwright-core').Page} page
-   * @param {Buffer} captchaBuffer
-   * @param {object} geminiConfig
-   * @returns {Promise<{ solved: boolean, percent?: number, description?: string, newCaptchaBuffer?: Buffer }>}
-   */
-  static async autoSolveWithGemini(page, captchaBuffer, geminiConfig) {
-    if (!geminiConfig || !geminiConfig.enabled) {
-      return { solved: false };
-    }
-
-    try {
-      const solver = new GeminiSolver(geminiConfig);
-      logger.info('[AutoSolve] Attempting automated visual alignment with Gemini 3.7 Flash...');
-      const result = await solver.solve(captchaBuffer);
-
-      if (result.success && typeof result.percent === 'number') {
-        logger.info(`[AutoSolve] Gemini identified target: "${result.description}" -> Sliding to ${result.percent.toFixed(2)}%`);
-        const dragResult = await this.executeSlideDrag(page, result.percent);
-        if (dragResult.success) {
-          logger.success('[AutoSolve] 🎉 Gemini automated captcha drag succeeded! Instance connected.');
-          return { solved: true, percent: result.percent, description: result.description };
-        } else {
-          logger.warn('[AutoSolve] Gemini drag completed but verification not passed. Preserving new captcha image for manual fallback.');
-          return { solved: false, percent: result.percent, description: result.description, newCaptchaBuffer: dragResult.newCaptchaBuffer };
-        }
-      }
-    } catch (err) {
-      logger.warn(`[AutoSolve] Automated solve error: ${err.message}`);
-    }
-
-    return { solved: false };
   }
 
   /**
@@ -723,6 +685,15 @@ export class PageActions {
       await page.mouse.move(targetX, startY);
       await this.sleep(150);
 
+      // Capture screenshot of actual dragged state in Chrome right before release
+      let postDragBuffer = null;
+      try {
+        const postCap = await this.checkAndCaptureCaptcha(page);
+        postDragBuffer = postCap.buffer || postCap.rawBuffer;
+      } catch (e) {
+        logger.warn(`Failed to capture post-drag screenshot: ${e.message}`);
+      }
+
       // 5. Mouse up
       await page.mouse.up();
       logger.success(`Slider drag completed (${dragDistance}px). Waiting for verification result...`);
@@ -732,12 +703,17 @@ export class PageActions {
       const recheck = await this.checkAndCaptureCaptcha(page);
       if (!recheck.visible) {
         logger.success('Captcha verification passed successfully!');
-        return { success: true, message: '🎉 滑块验证通过！实例正在继续连接运行...' };
+        return {
+          success: true,
+          message: '🎉 滑块验证通过！实例正在继续连接运行...',
+          postDragBuffer,
+        };
       } else {
         logger.warn('Captcha still visible after drag; verification failed or position needs adjustment.');
         return {
           success: false,
-          message: '滑块验证未通过或角度不符，请参考新图片调整百分比重试。',
+          message: '滑块验证未通过，请参考实际滑动落点微调后重试。',
+          postDragBuffer,
           newCaptchaBuffer: recheck.buffer,
         };
       }

@@ -334,12 +334,27 @@ export class MessageHandler {
       const res = await PageActions.executeSlideDrag(page, percent);
 
       if (res.success) {
-        await this.notifier.sendCard(CardTemplates.buildResultCard('验证成功', res.message, true), targetId);
+        if (res.postDragBuffer) {
+          await this.notifier.sendImageCard(
+            res.postDragBuffer,
+            `✅ 滑块验证成功 (${percent.toFixed(1)}%)`,
+            `🎉 **验证成功**！滑块已准确拖拽到位，正在继续连接实例运行...`,
+            targetId,
+            'green'
+          );
+        } else {
+          await this.notifier.sendCard(CardTemplates.buildResultCard('验证成功', res.message, true), targetId);
+        }
         // Wait and run round to verify connection
         await this.scheduler.runRound();
       } else {
-        if (res.newCaptchaBuffer) {
-          await this.notifier.sendCaptchaCard(res.newCaptchaBuffer, targetId, `${res.message} (上次尝试: ${percent}%)`);
+        const feedbackImg = res.postDragBuffer || res.newCaptchaBuffer;
+        if (feedbackImg) {
+          await this.notifier.sendCaptchaCard(
+            feedbackImg,
+            targetId,
+            `⚠️ 电脑端已滑动至 **${percent.toFixed(1)}%**，但验证未通过。\n📸 **上图为电脑端实际拖拽落点**，请根据落点微调后重试：`
+          );
         } else {
           await this.notifier.sendCard(CardTemplates.buildResultCard('滑动未完成', res.message, false), targetId);
         }

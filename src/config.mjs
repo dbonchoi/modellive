@@ -42,14 +42,6 @@ export const DEFAULT_CONFIG = {
     port: 3000,
     publicUrl: '',
   },
-  gemini: {
-    enabled: true,
-    apiKey: '',
-    model: 'gemini-3.7-flash',
-    effort: 'high',
-    proxy: 'http://192.168.0.110:31028',
-    timeoutMs: 180000,
-  },
   loginProvider: 'csdn',
   pidFile: '',
   logFile: '',
@@ -163,10 +155,6 @@ export async function loadConfig(customConfigPath, cliArgs = {}) {
     webServer: {
       ...DEFAULT_CONFIG.webServer,
       ...(fileConfig.webServer || {}),
-    },
-    gemini: {
-      ...DEFAULT_CONFIG.gemini,
-      ...(fileConfig.gemini || {}),
     },
     notebooks: Array.isArray(fileConfig.notebooks) && fileConfig.notebooks.length > 0
       ? fileConfig.notebooks

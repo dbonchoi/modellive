@@ -142,6 +142,42 @@ export class FeishuNotifier {
     const card = CardTemplates.buildCaptchaCard(imageKey, tip, finalH5Url);
     return await this.sendCard(card, receiveId);
   }
+
+  /**
+   * Send an image card with custom title and message.
+   */
+  async sendImageCard(imageBuffer, title, message, receiveId = null, color = 'blue') {
+    const imageKey = await this.uploadImage(imageBuffer);
+    if (!imageKey) {
+      return await this.sendCard(CardTemplates.buildResultCard(title, message, color === 'green'), receiveId);
+    }
+    const card = CardTemplates.buildImageCard(imageKey, title, message, color);
+    return await this.sendCard(card, receiveId);
+  }
+
+  /**
+   * Send plain text message to user.
+   */
+  async sendText(text, receiveId = null) {
+    if (!this.enabled || !this.client) return false;
+    const targetUsers = receiveId ? [receiveId] : (this.config.feishu?.adminUserIds || []);
+    for (const uid of targetUsers) {
+      try {
+        const idType = uid.startsWith('oc_') ? 'chat_id' : (uid.startsWith('ou_') ? 'open_id' : 'open_id');
+        await this.client.im.v1.message.create({
+          params: { receive_id_type: idType },
+          data: {
+            receive_id: uid,
+            msg_type: 'text',
+            content: JSON.stringify({ text }),
+          },
+        });
+      } catch (e) {
+        logger.error(`Failed to send text to ${uid}: ${e.message}`);
+      }
+    }
+    return true;
+  }
 }
 
 export default FeishuNotifier;
