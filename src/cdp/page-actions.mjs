@@ -52,15 +52,16 @@ export class PageActions {
         statusDesc = 'Activity simulated';
       } else {
         // smart mode
-        logger.cdp(`[${notebookConfig.name}] Running smart keepalive checks...`);
-        const checkResult = await this.smartCheckAndAct(page, notebookConfig);
+        logger.cdp(`[${notebookConfig.name}] Running smart keepalive checks... (forceStart=${Boolean(scheduleConfig.forceStart)})`);
+        const checkResult = await this.smartCheckAndAct(page, notebookConfig, scheduleConfig);
         restarted = checkResult.restarted;
         statusDesc = checkResult.statusDesc;
         captchaBuffer = checkResult.captchaBuffer || null;
       }
 
-      // Hold time
-      if (holdMs > 0 && !captchaBuffer) {
+      // Hold time: only hold for normal active keepalive rounds, not during manual commands or disconnected waits
+      const isTransientState = captchaBuffer || scheduleConfig.forceStart || statusDesc.includes('Disconnected') || statusDesc.includes('Ready');
+      if (holdMs > 0 && !isTransientState) {
         logger.cdp(`[${notebookConfig.name}] Holding page for ${(holdMs / 1000).toFixed(1)}s`);
         await this.sleep(holdMs);
       }
