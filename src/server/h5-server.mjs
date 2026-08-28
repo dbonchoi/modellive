@@ -19,7 +19,7 @@ export function getLocalIp() {
 }
 
 /**
- * Embedded H5 Web Server for Real-Time Interactive Captcha Slider.
+ * Embedded H5 Web Server for Real-Time Interactive Captcha Slider (Supports Jigsaw & Rotation).
  */
 export class H5Server {
   /**
@@ -203,7 +203,7 @@ export class H5Server {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             success: false,
-            message: '验证未通过，请在手机上微调滑动角度后再次点击提交。',
+            message: '验证未通过，请在手机上微调滑动位置后再次点击提交。',
             newImageBase64: newImage,
           }));
         }
@@ -261,23 +261,22 @@ export class H5Server {
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 16px;
+      padding: 16px 12px;
     }
     .header {
       width: 100%;
-      max-width: 420px;
+      max-width: 440px;
       text-align: center;
-      margin-bottom: 16px;
-      padding-top: 8px;
+      margin-bottom: 12px;
     }
     .header h1 {
-      font-size: 20px;
+      font-size: 19px;
       font-weight: 700;
       color: #38bdf8;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 8px;
+      gap: 6px;
     }
     .header p {
       font-size: 13px;
@@ -286,40 +285,124 @@ export class H5Server {
     }
     .card {
       width: 100%;
-      max-width: 420px;
+      max-width: 440px;
       background: #1e293b;
       border: 1px solid #334155;
       border-radius: 20px;
-      padding: 20px;
+      padding: 16px;
       box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
       display: flex;
       flex-direction: column;
       align-items: center;
     }
-    .preview-container {
+
+    /* Mode Tabs */
+    .tabs {
+      width: 100%;
+      display: flex;
+      background: #0f172a;
+      border-radius: 12px;
+      padding: 4px;
+      margin-bottom: 14px;
+      gap: 4px;
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 8px;
+      border: none;
+      background: transparent;
+      color: #94a3b8;
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tab-btn.active {
+      background: #38bdf8;
+      color: #0f172a;
+      font-weight: 700;
+      box-shadow: 0 2px 8px rgba(56, 189, 248, 0.4);
+    }
+
+    /* Jigsaw Mode: Full rectangular image with interactive sliding target */
+    .jigsaw-container {
       position: relative;
-      width: 260px;
-      height: 260px;
+      width: 100%;
+      background: #090d16;
+      border: 2px solid #38bdf8;
+      border-radius: 14px;
+      overflow: hidden;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+      touch-action: none;
+    }
+    #jigsaw-img {
+      width: 100%;
+      height: auto;
+      display: block;
+      pointer-events: none;
+    }
+    /* Movable vertical guide line and target notch indicator */
+    .target-cursor {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: #38bdf8;
+      box-shadow: 0 0 12px #38bdf8, 0 0 20px #0284c7;
+      left: 50%;
+      transform: translateX(-50%);
+      pointer-events: none;
+      z-index: 10;
+    }
+    .target-box {
+      position: absolute;
+      top: 30%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 44px;
+      height: 44px;
+      border: 2px dashed #facc15;
+      background: rgba(56, 189, 248, 0.2);
+      border-radius: 8px;
+      pointer-events: none;
+      box-shadow: 0 0 10px rgba(250, 204, 21, 0.5);
+      z-index: 11;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: #facc15;
+      font-weight: bold;
+    }
+
+    /* Rotation Mode: Circular Rotating Preview */
+    .rotation-container {
+      position: relative;
+      width: 240px;
+      height: 240px;
       border-radius: 50%;
       overflow: hidden;
       background: #090d16;
       border: 4px solid #38bdf8;
       box-shadow: 0 0 20px rgba(56, 189, 248, 0.35);
-      margin: 12px 0 20px 0;
-      display: flex;
+      margin: 4px 0 16px 0;
+      display: none;
       align-items: center;
       justify-content: center;
       user-select: none;
     }
-    #preview-img {
+    #rotation-img {
       width: 100%;
       height: 100%;
       object-fit: cover;
       transform-origin: center center;
-      transition: transform 0.04s linear;
       pointer-events: none;
     }
-    /* Crosshair alignment guides */
     .guide-v, .guide-h {
       position: absolute;
       background: rgba(255, 255, 255, 0.25);
@@ -327,14 +410,7 @@ export class H5Server {
     }
     .guide-v { width: 1px; height: 100%; left: 50%; top: 0; }
     .guide-h { height: 1px; width: 100%; top: 50%; left: 0; }
-    .guide-circle {
-      position: absolute;
-      width: 80%;
-      height: 80%;
-      border: 1px dashed rgba(56, 189, 248, 0.4);
-      border-radius: 50%;
-      pointer-events: none;
-    }
+
     .live-stats {
       width: 100%;
       display: flex;
@@ -352,27 +428,47 @@ export class H5Server {
 
     .slider-wrap {
       width: 100%;
-      margin-bottom: 20px;
+      margin-bottom: 16px;
     }
     input[type=range] {
       -webkit-appearance: none;
       width: 100%;
-      height: 12px;
-      border-radius: 6px;
+      height: 14px;
+      border-radius: 7px;
       background: #334155;
       outline: none;
     }
     input[type=range]::-webkit-slider-thumb {
       -webkit-appearance: none;
       appearance: none;
-      width: 32px;
-      height: 32px;
+      width: 34px;
+      height: 34px;
       border-radius: 50%;
       background: #38bdf8;
       cursor: pointer;
-      box-shadow: 0 0 10px #38bdf8;
+      box-shadow: 0 0 12px #38bdf8;
       border: 3px solid #ffffff;
     }
+
+    .quick-row {
+      width: 100%;
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .btn-quick {
+      flex: 1;
+      padding: 8px 4px;
+      background: #0f172a;
+      color: #94a3b8;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-quick:active { background: #38bdf8; color: #0f172a; }
+
     .fine-tune-row {
       width: 100%;
       display: flex;
@@ -389,7 +485,6 @@ export class H5Server {
       font-size: 14px;
       font-weight: 600;
       cursor: pointer;
-      transition: background 0.15s;
     }
     .btn-tune:active { background: #475569; transform: scale(0.97); }
 
@@ -408,7 +503,6 @@ export class H5Server {
       align-items: center;
       justify-content: center;
       gap: 8px;
-      transition: all 0.2s;
     }
     .btn-submit:active { transform: scale(0.98); opacity: 0.9; }
     .btn-submit:disabled { background: #475569; cursor: not-allowed; box-shadow: none; }
@@ -425,10 +519,9 @@ export class H5Server {
       gap: 4px;
       padding: 8px;
     }
-    .btn-refresh:active { color: #f8fafc; }
 
     #status-msg {
-      margin-top: 14px;
+      margin-top: 12px;
       font-size: 14px;
       text-align: center;
       min-height: 24px;
@@ -452,16 +545,28 @@ export class H5Server {
 <body>
 
   <div class="header">
-    <h1>📱 实时滑动验证面板</h1>
-    <p>拖动下方滑块，观察图片实时回正对齐</p>
+    <h1>📱 手机实时滑动验证面板</h1>
+    <p>拖动滑块使参考标靶精确对齐缺口或回正</p>
   </div>
 
   <div class="card">
-    <div class="preview-container">
-      <img id="preview-img" src="" alt="Captcha Image">
+    <div class="tabs">
+      <button id="tab-jigsaw" class="tab-btn active" onclick="switchMode('jigsaw')">🧩 拼图从左到右滑动</button>
+      <button id="tab-rotation" class="tab-btn" onclick="switchMode('rotation')">🔄 旋转回正模式</button>
+    </div>
+
+    <!-- Jigsaw Mode -->
+    <div id="jigsaw-view" class="jigsaw-container">
+      <img id="jigsaw-img" src="" alt="Captcha Image">
+      <div id="target-cursor" class="target-cursor"></div>
+      <div id="target-box" class="target-box">对齐处</div>
+    </div>
+
+    <!-- Rotation Mode -->
+    <div id="rotation-view" class="rotation-container">
+      <img id="rotation-img" src="" alt="Captcha Rotation Image">
       <div class="guide-v"></div>
       <div class="guide-h"></div>
-      <div class="guide-circle"></div>
     </div>
 
     <div class="live-stats">
@@ -470,13 +575,21 @@ export class H5Server {
         <span id="percent-val" class="stat-value">50.0%</span>
       </div>
       <div>
-        <span class="stat-label">旋转角度: </span>
-        <span id="angle-val" class="stat-value">180.0°</span>
+        <span id="mode-stat-label" class="stat-label">横向位置: </span>
+        <span id="mode-stat-val" class="stat-value">50%</span>
       </div>
     </div>
 
     <div class="slider-wrap">
       <input type="range" id="slider" min="0" max="100" step="0.5" value="50">
+    </div>
+
+    <div class="quick-row">
+      <button class="btn-quick" onclick="setSlider(20)">20%</button>
+      <button class="btn-quick" onclick="setSlider(35)">35%</button>
+      <button class="btn-quick" onclick="setSlider(50)">50%</button>
+      <button class="btn-quick" onclick="setSlider(65)">65%</button>
+      <button class="btn-quick" onclick="setSlider(80)">80%</button>
     </div>
 
     <div class="fine-tune-row">
@@ -497,29 +610,71 @@ export class H5Server {
 
   <script>
     const slider = document.getElementById('slider');
-    const previewImg = document.getElementById('preview-img');
+    const jigsawView = document.getElementById('jigsaw-view');
+    const rotationView = document.getElementById('rotation-view');
+    const jigsawImg = document.getElementById('jigsaw-img');
+    const rotationImg = document.getElementById('rotation-img');
+    const targetCursor = document.getElementById('target-cursor');
+    const targetBox = document.getElementById('target-box');
     const percentVal = document.getElementById('percent-val');
-    const angleVal = document.getElementById('angle-val');
+    const modeStatLabel = document.getElementById('mode-stat-label');
+    const modeStatVal = document.getElementById('mode-stat-val');
     const submitBtn = document.getElementById('submit-btn');
     const statusMsg = document.getElementById('status-msg');
 
+    let currentMode = 'jigsaw';
     let currentPercent = 50;
+
+    function switchMode(mode) {
+      currentMode = mode;
+      document.getElementById('tab-jigsaw').classList.toggle('active', mode === 'jigsaw');
+      document.getElementById('tab-rotation').classList.toggle('active', mode === 'rotation');
+      
+      if (mode === 'jigsaw') {
+        jigsawView.style.display = 'flex';
+        rotationView.style.display = 'none';
+        modeStatLabel.innerText = '横向位置: ';
+      } else {
+        jigsawView.style.display = 'none';
+        rotationView.style.display = 'flex';
+        modeStatLabel.innerText = '旋转角度: ';
+      }
+      updateView(currentPercent);
+    }
 
     function updateView(percent) {
       currentPercent = Math.max(0, Math.min(100, Number(percent)));
-      const angle = (currentPercent * 3.6).toFixed(1);
-      
-      // Real-time CSS Rotation
-      previewImg.style.transform = \`rotate(\${angle}deg)\`;
-      
       percentVal.innerText = currentPercent.toFixed(1) + '%';
-      angleVal.innerText = angle + '°';
       submitBtn.querySelector('span').innerText = \`🚀 确认提交滑动 (\${currentPercent.toFixed(1)}%)\`;
+
+      if (currentMode === 'jigsaw') {
+        targetCursor.style.left = currentPercent + '%';
+        targetBox.style.left = currentPercent + '%';
+        modeStatVal.innerText = currentPercent.toFixed(1) + '%';
+      } else {
+        const angle = (currentPercent * 3.6).toFixed(1);
+        rotationImg.style.transform = \`rotate(\${angle}deg)\`;
+        modeStatVal.innerText = angle + '°';
+      }
     }
 
     slider.addEventListener('input', (e) => {
       updateView(e.target.value);
     });
+
+    // Touch directly on jigsaw image to jump to position
+    jigsawView.addEventListener('pointerdown', (e) => {
+      const rect = jigsawView.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const pct = Math.max(0, Math.min(100, (clickX / rect.width) * 100));
+      slider.value = pct;
+      updateView(pct);
+    });
+
+    function setSlider(val) {
+      slider.value = val;
+      updateView(val);
+    }
 
     function adjustSlider(delta) {
       const newPercent = Math.max(0, Math.min(100, currentPercent + delta));
@@ -528,17 +683,19 @@ export class H5Server {
     }
 
     async function loadState() {
-      statusMsg.innerHTML = '<span class="msg-info">正在获取验证码状态...</span>';
+      statusMsg.innerHTML = '<span class="msg-info">正在获取验证码...</span>';
       try {
         const res = await fetch('/api/captcha-state');
         const data = await res.json();
         if (data.active && data.imageBase64) {
-          previewImg.src = 'data:image/png;base64,' + data.imageBase64;
+          const imgSrc = 'data:image/png;base64,' + data.imageBase64;
+          jigsawImg.src = imgSrc;
+          rotationImg.src = imgSrc;
           slider.value = data.lastPercent || 50;
           updateView(slider.value);
           statusMsg.innerHTML = '';
         } else {
-          statusMsg.innerHTML = '<span class="msg-info">当前未检测到活跃验证码，请在飞书发送 /start</span>';
+          statusMsg.innerHTML = '<span class="msg-info">未检测到验证码，请在飞书发送 /start</span>';
         }
       } catch (err) {
         statusMsg.innerHTML = '<span class="msg-error">加载失败: ' + err.message + '</span>';
@@ -547,8 +704,8 @@ export class H5Server {
 
     async function submitSlide() {
       submitBtn.disabled = true;
-      submitBtn.innerHTML = '<div class="loading-spinner"></div> 正在同步滑动...';
-      statusMsg.innerHTML = '<span class="msg-info">正在电脑端模拟真人手势滑动...</span>';
+      submitBtn.innerHTML = '<div class="loading-spinner"></div> 正在电脑端模拟真人滑动...';
+      statusMsg.innerHTML = '<span class="msg-info">正在同步滑动 (' + currentPercent.toFixed(1) + '%)...</span>';
 
       try {
         const res = await fetch('/api/submit-slide', {
@@ -567,7 +724,9 @@ export class H5Server {
           submitBtn.disabled = false;
           submitBtn.innerHTML = '<span>🚀 再次提交滑动</span>';
           if (result.newImageBase64) {
-            previewImg.src = 'data:image/png;base64,' + result.newImageBase64;
+            const newSrc = 'data:image/png;base64,' + result.newImageBase64;
+            jigsawImg.src = newSrc;
+            rotationImg.src = newSrc;
           }
         }
       } catch (err) {
@@ -583,9 +742,9 @@ export class H5Server {
         const res = await fetch('/api/refresh-captcha', { method: 'POST' });
         const data = await res.json();
         if (data.success && data.imageBase64) {
-          previewImg.src = 'data:image/png;base64,' + data.imageBase64;
-          slider.value = 50;
-          updateView(50);
+          const newSrc = 'data:image/png;base64,' + data.imageBase64;
+          jigsawImg.src = newSrc;
+          rotationImg.src = newSrc;
           statusMsg.innerHTML = '<span class="msg-success">已刷新验证码图片</span>';
         } else {
           statusMsg.innerHTML = '<span class="msg-error">' + (data.message || '刷新失败') + '</span>';
