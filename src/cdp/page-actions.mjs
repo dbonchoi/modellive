@@ -104,6 +104,19 @@ export class PageActions {
     // 1. Check if captcha modal is already open
     const existingCaptcha = await this.checkAndCaptureCaptcha(page);
     if (existingCaptcha.buffer) {
+      if (allowLaunch) {
+        logger.info(`[${notebookConfig.name}] Captcha is open, attempting AI auto-solve...`);
+        try {
+          const { CaptchaSolver } = await import('./captcha-solver.mjs');
+          const autoRes = await CaptchaSolver.autoSolve(page);
+          if (autoRes.solved) {
+            return { restarted: true, statusDesc: 'Runtime instance connected' };
+          }
+        } catch (err) {
+          logger.warn(`AI auto-solve error: ${err.message}`);
+        }
+      }
+
       logger.warn(`[${notebookConfig.name}] Security verification / captcha modal is currently open.`);
       return { restarted: false, statusDesc: 'Captcha Verification Required', captchaBuffer: existingCaptcha.buffer };
     }
@@ -321,8 +334,21 @@ export class PageActions {
         // Check if captcha appeared
         const cap = await this.checkAndCaptureCaptcha(page);
         if (cap.buffer) {
-          logger.warn(`[${notebookConfig.name}] Security captcha popup appeared after clicking connect!`);
-          return { success: false, captchaBuffer: cap.buffer };
+          logger.warn(`[${notebookConfig.name}] Security captcha popup appeared after clicking connect! Running AI auto-solve...`);
+          try {
+            const { CaptchaSolver } = await import('./captcha-solver.mjs');
+            const autoRes = await CaptchaSolver.autoSolve(page);
+            if (autoRes.solved) {
+              logger.success(`[${notebookConfig.name}] Captcha was successfully solved automatically!`);
+              return { success: true };
+            }
+          } catch (err) {
+            logger.warn(`AI auto-solve attempt failed: ${err.message}`);
+          }
+
+          // If auto-solve did not complete, capture updated screenshot with ruler
+          const finalCap = await this.checkAndCaptureCaptcha(page);
+          return { success: false, captchaBuffer: finalCap.buffer || cap.buffer };
         }
 
         return { success: true };
