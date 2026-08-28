@@ -63,8 +63,9 @@ export class GeminiSolver {
 
     logger.info(`[AgySolver] Launching agy CLI (Model: ${this.model}, Effort: ${this.effort}, Proxy: ${this.proxy})...`);
 
+    const exeName = process.platform === 'win32' ? 'agy.exe' : 'agy';
     return new Promise((resolve) => {
-      execFile('agy', args, { env, timeout: this.timeoutMs, shell: true }, (error, stdout, stderr) => {
+      execFile(exeName, args, { env, timeout: this.timeoutMs }, (error, stdout, stderr) => {
         // Clean up temporary image
         try { fs.unlinkSync(tempImgPath); } catch {}
 
