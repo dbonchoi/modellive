@@ -383,6 +383,110 @@ export class PageActions {
   }
 
   /**
+   * Locate the captcha slider button and track elements across main page and frames.
+   * @param {import('playwright-core').Page} page
+   */
+  static async findSliderElements(page) {
+    const frames = [page, ...page.frames()];
+
+    const btnSelectors = [
+      '#nc_1_n1z',
+      '[id$="_n1z"]',
+      'span.btn_slide',
+      'div.btn_slide',
+      '.nc_iconfont.btn_slide',
+      '.nc_scale span',
+      '[class*="btn_slide"]',
+      '[class*="slider-button"]',
+      '[class*="drag-btn"]',
+      '[class*="slider-btn"]',
+      '[class*="handler"]',
+      '[class*="drag"]',
+      'div[role="slider"]',
+      'span[role="slider"]',
+    ];
+
+    const trackSelectors = [
+      '#nc_1__scale_text',
+      '.scale_text',
+      '.nc_scale',
+      '[class*="scale_text"]',
+      '[class*="slide_track"]',
+      '[class*="slider-track"]',
+      'div:has-text("拖动滑块")',
+      'span:has-text("拖动滑块")',
+    ];
+
+    for (const frame of frames) {
+      try {
+        let sliderBtn = null;
+        let sliderTrack = null;
+
+        for (const sel of btnSelectors) {
+          try {
+            const els = await frame.$$(sel);
+            for (const el of els) {
+              if (await el.isVisible()) {
+                const box = await el.boundingBox();
+                if (box && box.width >= 15 && box.height >= 15) {
+                  sliderBtn = el;
+                  break;
+                }
+              }
+            }
+            if (sliderBtn) break;
+          } catch {}
+        }
+
+        for (const sel of trackSelectors) {
+          try {
+            const el = await frame.$(sel);
+            if (el && (await el.isVisible())) {
+              const box = await el.boundingBox();
+              if (box && box.width >= 50) {
+                sliderTrack = el;
+                break;
+              }
+            }
+          } catch {}
+        }
+
+        // Fallback: If not found by CSS, evaluate DOM structure inside verification modal
+        if (!sliderBtn) {
+          const btnHandle = await frame.evaluateHandle(() => {
+            const track = document.querySelector('.scale_text, .nc_scale, [class*="slider"], [class*="track"]') ||
+                          Array.from(document.querySelectorAll('div, span')).find(el => el.innerText && el.innerText.includes('拖动滑块'));
+            if (track) {
+              const parent = track.parentElement || track;
+              const potentialBtns = parent.querySelectorAll('span, div');
+              for (const b of potentialBtns) {
+                const rect = b.getBoundingClientRect();
+                if (rect.width >= 20 && rect.width <= 90 && rect.height >= 20 && rect.height <= 90) {
+                  return b;
+                }
+              }
+            }
+            return null;
+          }).catch(() => null);
+
+          if (btnHandle) {
+            const btn = btnHandle.asElement();
+            if (btn && (await btn.isVisible())) {
+              sliderBtn = btn;
+            }
+          }
+        }
+
+        if (sliderBtn) {
+          return { frame, sliderBtn, sliderTrack };
+        }
+      } catch {}
+    }
+
+    return { frame: null, sliderBtn: null, sliderTrack: null };
+  }
+
+  /**
    * Execute human-like slider drag on the captcha modal.
    * @param {import('playwright-core').Page} page
    * @param {number} targetPercent (0 - 100)
@@ -391,63 +495,25 @@ export class PageActions {
   static async executeSlideDrag(page, targetPercent = 50) {
     try {
       logger.info(`Simulating human slider drag to ${targetPercent}%...`);
+      await page.bringToFront().catch(() => {});
 
-      // Find drag button / slider handle
-      const btnSelectors = [
-        'div:has-text(">>")',
-        'span:has-text(">>")',
-        '[class*="btn_slide"]',
-        '[class*="slider-button"]',
-        '[class*="drag-btn"]',
-        '[class*="nc_iconfont"]',
-        '.nc_scale span',
-        'div[class*="handler"]',
-      ];
-
-      let sliderBtn = null;
-      for (const sel of btnSelectors) {
-        try {
-          const el = await page.$(sel);
-          if (el && (await el.isVisible())) {
-            sliderBtn = el;
-            break;
-          }
-        } catch {
-          // continue
-        }
-      }
+      const { sliderBtn, sliderTrack } = await this.findSliderElements(page);
 
       if (!sliderBtn) {
-        return { success: false, message: '未能找到滑块拖动按钮 (>>)' };
+        logger.warn('Could not locate slider drag handle (#nc_1_n1z / .btn_slide).');
+        return { success: false, message: '未能定位到滑块拖动按钮，请在电脑端操作。' };
       }
 
       const btnBox = await sliderBtn.boundingBox();
       if (!btnBox) {
-        return { success: false, message: '无法获取滑块坐标' };
+        return { success: false, message: '无法获取滑块按钮坐标。' };
       }
 
-      // Find track to calculate total drag distance
-      const trackSelectors = [
-        '[class*="slide_track"]',
-        '[class*="scale_text"]',
-        '[class*="slider-track"]',
-        'div:has-text("拖动滑块")',
-        '.nc_scale',
-      ];
-
-      let trackWidth = 260; // standard default
-      for (const sel of trackSelectors) {
-        try {
-          const t = await page.$(sel);
-          if (t && (await t.isVisible())) {
-            const tBox = await t.boundingBox();
-            if (tBox && tBox.width > btnBox.width) {
-              trackWidth = tBox.width - btnBox.width;
-              break;
-            }
-          }
-        } catch {
-          // continue
+      let trackWidth = 260; // standard fallback
+      if (sliderTrack) {
+        const trackBox = await sliderTrack.boundingBox();
+        if (trackBox && trackBox.width > btnBox.width) {
+          trackWidth = trackBox.width - btnBox.width;
         }
       }
 
@@ -456,37 +522,43 @@ export class PageActions {
       const startY = btnBox.y + btnBox.height / 2;
       const targetX = startX + dragDistance;
 
-      logger.info(`Slider drag start: (${startX}, ${startY}) -> target: (${targetX}, ${startY}), distance: ${dragDistance}px`);
+      logger.info(`[Captcha Drag] Start=(${startX.toFixed(1)}, ${startY.toFixed(1)}), Target=(${targetX.toFixed(1)}, ${startY.toFixed(1)}), Distance=${dragDistance}px (${targetPercent}%)`);
 
-      // Human-like smooth drag simulation
+      // 1. Move to handle center
       await page.mouse.move(startX, startY);
-      await this.sleep(100);
-      await page.mouse.down();
       await this.sleep(80);
 
-      const steps = 30;
+      // 2. Mouse down
+      await page.mouse.down();
+      await this.sleep(100);
+
+      // 3. Multi-step human-like smooth movement (ease-out curve with small organic Y jitter)
+      const steps = 35;
       for (let i = 1; i <= steps; i++) {
         const progress = i / steps;
-        // Ease-out cubic curve + random small Y jitter
         const ease = 1 - Math.pow(1 - progress, 3);
-        const curX = startX + dragDistance * ease;
-        const jitterY = startY + (Math.random() * 4 - 2);
-        await page.mouse.move(curX, jitterY);
-        await this.sleep(15 + Math.floor(Math.random() * 10));
+        const currX = startX + dragDistance * ease;
+        const jitterY = startY + (Math.sin(progress * Math.PI) * (Math.random() * 3 - 1.5));
+        await page.mouse.move(currX, jitterY);
+        await this.sleep(12 + Math.floor(Math.random() * 10));
       }
 
-      await this.sleep(120);
+      // 4. Slight micro-correction and hover at end position
+      await page.mouse.move(targetX, startY);
+      await this.sleep(150);
+
+      // 5. Mouse up
       await page.mouse.up();
-      logger.success(`Slider drag completed. Waiting for verification result...`);
+      logger.success(`Slider drag completed (${dragDistance}px). Waiting for verification result...`);
       await this.sleep(2500);
 
-      // Check if captcha is still visible or disappeared
+      // 6. Check if verification passed
       const recheck = await this.checkAndCaptureCaptcha(page);
       if (!recheck.visible) {
         logger.success('Captcha verification passed successfully!');
         return { success: true, message: '🎉 滑块验证通过！实例正在继续连接运行...' };
       } else {
-        logger.warn('Captcha still visible after drag; verification may have failed or needs another position.');
+        logger.warn('Captcha still visible after drag; verification failed or position needs adjustment.');
         return {
           success: false,
           message: '滑块验证未通过或角度不符，请参考新图片调整百分比重试。',
@@ -506,19 +578,22 @@ export class PageActions {
   static async refreshCaptcha(page) {
     try {
       const refreshSelectors = [
-        'div[class*="refresh"]',
-        'span[class*="refresh"]',
-        'svg[class*="refresh"]',
-        'a[class*="refresh"]',
+        'div:has-text("请完成安全验证") svg',
+        'div:has-text("请完成安全验证") div[class*="refresh"]',
+        'div:has-text("请完成安全验证") span[class*="refresh"]',
         '.nc_iconfont_refresh',
+        '[class*="refresh"]',
+        'svg[class*="refresh"]',
       ];
       for (const sel of refreshSelectors) {
-        const el = await page.$(sel);
-        if (el && (await el.isVisible())) {
-          await el.click();
-          await this.sleep(1500);
-          return await this.checkAndCaptureCaptcha(page);
-        }
+        try {
+          const el = await page.$(sel);
+          if (el && (await el.isVisible())) {
+            await page.evaluate(e => e.click(), el).catch(() => el.click());
+            await this.sleep(1500);
+            return await this.checkAndCaptureCaptcha(page);
+          }
+        } catch {}
       }
       return await this.checkAndCaptureCaptcha(page);
     } catch {
