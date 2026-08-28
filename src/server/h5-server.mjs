@@ -254,7 +254,7 @@ export class H5Server {
               const page = await this.browserManager.getPrimaryPage();
               const cap = await PageActions.checkAndCaptureCaptcha(page);
               if (!cap.visible) {
-                ws.send(JSON.stringify({ type: 'status', passed: true, message: '🎉 验证通过！' }));
+                ws.send(JSON.stringify({ type: 'status', passed: true, message: '🎉 验证通过！实例正在继续连接运行...' }));
                 if (this.notifier) {
                   this.notifier.sendText(
                     '🎉 ModelScope 实例已在手机实时远程操作中完成验证并成功连接！',
@@ -264,9 +264,49 @@ export class H5Server {
               }
             } catch {}
           }, 1500);
+        } else if (event === 'click') {
+          // Dedicated click event: press then release
+          await this.cdpSession.send('Input.dispatchMouseEvent', {
+            type: 'mousePressed',
+            x: Math.round(x),
+            y: Math.round(y),
+            button: 'left',
+            clickCount: 1,
+          });
+          await PageActions.sleep(80);
+          await this.cdpSession.send('Input.dispatchMouseEvent', {
+            type: 'mouseReleased',
+            x: Math.round(x),
+            y: Math.round(y),
+            button: 'left',
+          });
         }
       } catch (err) {
         logger.warn(`[H5Server] Failed to dispatch mouse event: ${err.message}`);
+      }
+    } else if (msg.type === 'click_connect') {
+      try {
+        const page = await this.browserManager.getPrimaryPage();
+        const nbConfig = this.scheduler?.config?.notebooks?.[0] || { name: 'ModelScope', instanceType: 'CPU' };
+
+        // 1. Click "连接运行时" button if present
+        const connectBtn = await page.$('button:has-text("连接运行时"), div[role="button"]:has-text("连接运行时"), a:has-text("连接运行时")');
+        if (connectBtn && (await connectBtn.isVisible())) {
+          logger.info('[H5Server] Auto-clicking "连接运行时" button...');
+          await page.evaluate(el => el.click(), connectBtn).catch(async () => {
+            await connectBtn.click({ force: true, timeout: 3000 });
+          });
+          await PageActions.sleep(1500);
+        }
+
+        // 2. Handle "选择实例" modal and click "连接"
+        const modalRes = await PageActions.handleSelectInstanceModal(page, nbConfig, { forceStart: true });
+        ws.send(JSON.stringify({
+          type: 'toast',
+          message: modalRes.captchaBuffer ? '已唤起安全验证码！' : '正在连接实例...',
+        }));
+      } catch (err) {
+        ws.send(JSON.stringify({ type: 'toast', message: `操作异常: ${err.message}` }));
       }
     } else if (msg.type === 'refresh') {
       try {
@@ -283,7 +323,7 @@ export class H5Server {
         ws.send(JSON.stringify({
           type: 'status',
           passed: !cap.visible,
-          message: !cap.visible ? '🎉 验证已完成！' : '验证尚未通过，请拖动滑块完成拼图。',
+          message: !cap.visible ? '🎉 验证已完成，实例正在运行中！' : '验证尚未通过，请拖动滑块完成拼图。',
         }));
       } catch (err) {
         ws.send(JSON.stringify({ type: 'status', passed: false, message: err.message }));
@@ -488,7 +528,7 @@ export class H5Server {
     }
     header {
       width: 100%;
-      padding: 10px 16px;
+      padding: 10px 14px;
       background: #111827;
       border-bottom: 1px solid #1f2937;
       display: flex;
@@ -499,10 +539,15 @@ export class H5Server {
     .brand {
       display: flex;
       align-items: center;
+      gap: 6px;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
       gap: 8px;
     }
     .status-badge {
-      font-size: 12px;
+      font-size: 11px;
       padding: 3px 8px;
       border-radius: 999px;
       background: rgba(34, 197, 94, 0.15);
@@ -519,8 +564,8 @@ export class H5Server {
       border-color: rgba(239, 68, 68, 0.3);
     }
     .status-dot {
-      width: 7px;
-      height: 7px;
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
       background: #22c55e;
       animation: pulse 1.5s infinite;
@@ -533,6 +578,24 @@ export class H5Server {
       0% { transform: scale(0.95); opacity: 0.8; }
       50% { transform: scale(1.2); opacity: 1; }
       100% { transform: scale(0.95); opacity: 0.8; }
+    }
+    .btn-icon {
+      background: #1f2937;
+      border: 1px solid #374151;
+      color: #e2e8f0;
+      padding: 4px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .btn-icon.active {
+      background: #2563eb;
+      border-color: #3b82f6;
+      color: #fff;
     }
     .viewport-container {
       flex: 1;
@@ -556,7 +619,7 @@ export class H5Server {
       width: 32px;
       height: 32px;
       border-radius: 50%;
-      background: rgba(59, 130, 246, 0.4);
+      background: rgba(59, 130, 246, 0.35);
       border: 2px solid #60a5fa;
       pointer-events: none;
       transform: translate(-50%, -50%);
@@ -564,42 +627,65 @@ export class H5Server {
       z-index: 5;
       box-shadow: 0 0 12px rgba(59, 130, 246, 0.8);
     }
-    .instructions-bar {
+    .quick-bar {
       position: absolute;
-      top: 8px;
-      background: rgba(15, 23, 42, 0.85);
-      backdrop-filter: blur(8px);
-      padding: 6px 14px;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.88);
+      backdrop-filter: blur(10px);
+      padding: 5px 12px;
       border-radius: 999px;
-      border: 1px solid rgba(255,255,255,0.1);
-      font-size: 12px;
-      color: #94a3b8;
+      border: 1px solid rgba(255,255,255,0.15);
       display: flex;
       align-items: center;
-      gap: 6px;
-      pointer-events: none;
+      gap: 8px;
+      z-index: 8;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+    }
+    .quick-btn {
+      background: rgba(255,255,255,0.1);
+      border: none;
+      color: #f1f5f9;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 3px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .quick-btn:active {
+      background: rgba(255,255,255,0.25);
     }
     footer {
       width: 100%;
-      padding: 12px 16px env(safe-area-inset-bottom, 12px);
+      padding: 10px 14px env(safe-area-inset-bottom, 10px);
       background: #111827;
       border-top: 1px solid #1f2937;
       display: flex;
-      gap: 10px;
+      flex-direction: column;
+      gap: 8px;
       z-index: 10;
+    }
+    .footer-row {
+      width: 100%;
+      display: flex;
+      gap: 8px;
     }
     .btn {
       flex: 1;
-      height: 44px;
+      height: 42px;
       border-radius: 10px;
       border: none;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 600;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
+      gap: 5px;
       transition: all 0.15s ease;
       touch-action: manipulation;
     }
@@ -616,6 +702,11 @@ export class H5Server {
       color: #fff;
       box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
     }
+    .btn-accent {
+      background: linear-gradient(135deg, #059669, #047857);
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(5, 150, 105, 0.3);
+    }
     .toast {
       position: fixed;
       top: 60px;
@@ -623,9 +714,9 @@ export class H5Server {
       transform: translateX(-50%);
       background: rgba(15, 23, 42, 0.95);
       color: #fff;
-      padding: 10px 20px;
+      padding: 8px 16px;
       border-radius: 999px;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 500;
       border: 1px solid rgba(255,255,255,0.15);
       backdrop-filter: blur(10px);
@@ -644,31 +735,41 @@ export class H5Server {
 <body>
   <header>
     <div class="brand">
-      <span style="font-size: 18px;">📱</span>
-      <strong style="font-size: 14px; color: #f1f5f9;">Chrome 实时触控</strong>
+      <span style="font-size: 16px;">📱</span>
+      <strong style="font-size: 13px; color: #f1f5f9;">Chrome 远程操控</strong>
     </div>
-    <div id="statusBadge" class="status-badge">
-      <span class="status-dot"></span>
-      <span id="statusText">连接中...</span>
+    <div class="header-actions">
+      <button class="btn-icon" id="btnToggleZoom">
+        <span id="zoomIcon">🔍</span> <span id="zoomText">放大验证区</span>
+      </button>
+      <div id="statusBadge" class="status-badge">
+        <span class="status-dot"></span>
+        <span id="statusText">连接中...</span>
+      </div>
     </div>
   </header>
 
   <div class="viewport-container" id="viewportContainer">
-    <div class="instructions-bar">
-      <span>👆</span>
-      <span>手指直接在画面上按住滑块拖拽即可</span>
+    <div class="quick-bar">
+      <button class="quick-btn" id="btnQuickConnect">
+        <span>🚀</span> 自动点击连接实例
+      </button>
+      <span style="color: #475569;">|</span>
+      <span style="font-size: 11px; color: #94a3b8;" id="modeHint">双指或上方按钮可缩放</span>
     </div>
     <canvas id="screencast"></canvas>
     <div id="touchCursor" class="touch-cursor"></div>
   </div>
 
   <footer>
-    <button class="btn btn-secondary" id="btnRefresh">
-      <span>🔄</span> 刷新换一张
-    </button>
-    <button class="btn btn-primary" id="btnCheck">
-      <span>✅</span> 检查验证状态
-    </button>
+    <div class="footer-row">
+      <button class="btn btn-secondary" id="btnRefresh">
+        <span>🔄</span> 刷新验证码
+      </button>
+      <button class="btn btn-primary" id="btnCheck">
+        <span>✅</span> 检查验证状态
+      </button>
+    </div>
   </footer>
 
   <div id="toast" class="toast"></div>
@@ -679,31 +780,89 @@ export class H5Server {
     const statusBadge = document.getElementById('statusBadge');
     const statusText = document.getElementById('statusText');
     const touchCursor = document.getElementById('touchCursor');
+    const btnToggleZoom = document.getElementById('btnToggleZoom');
+    const zoomText = document.getElementById('zoomText');
+    const zoomIcon = document.getElementById('zoomIcon');
+    const btnQuickConnect = document.getElementById('btnQuickConnect');
     const btnRefresh = document.getElementById('btnRefresh');
     const btnCheck = document.getElementById('btnCheck');
     const toast = document.getElementById('toast');
+    const modeHint = document.getElementById('modeHint');
 
     let ws = null;
-    let imgWidth = 1280;
-    let imgHeight = 800;
+    let fullWidth = 1280;
+    let fullHeight = 800;
     let isTouching = false;
+    let touchStartTime = 0;
+    let startX = 0;
+    let startY = 0;
+    let isZoomed = false; // Zoom mode (crops to center modal)
+
     let frameImage = new Image();
 
-    frameImage.onload = () => {
-      if (canvas.width !== frameImage.width || canvas.height !== frameImage.height) {
-        canvas.width = frameImage.width;
-        canvas.height = frameImage.height;
-        imgWidth = frameImage.width;
-        imgHeight = frameImage.height;
+    function renderFrame() {
+      if (!frameImage.complete || frameImage.naturalWidth === 0) return;
+
+      fullWidth = frameImage.width;
+      fullHeight = frameImage.height;
+
+      if (!isZoomed) {
+        // Fullscreen overview
+        if (canvas.width !== fullWidth || canvas.height !== fullHeight) {
+          canvas.width = fullWidth;
+          canvas.height = fullHeight;
+        }
+        ctx.drawImage(frameImage, 0, 0, fullWidth, fullHeight);
+      } else {
+        // Zoomed mode: Crop center region (width ~480px, height ~380px centered)
+        const cropW = Math.min(fullWidth * 0.45, 520);
+        const cropH = Math.min(fullHeight * 0.55, 420);
+        const cropX = (fullWidth - cropW) / 2;
+        const cropY = (fullHeight - cropH) / 2;
+
+        if (canvas.width !== Math.round(cropW) || canvas.height !== Math.round(cropH)) {
+          canvas.width = Math.round(cropW);
+          canvas.height = Math.round(cropH);
+        }
+        ctx.drawImage(frameImage, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
       }
-      ctx.drawImage(frameImage, 0, 0);
-    };
+    }
+
+    frameImage.onload = renderFrame;
 
     function showToast(msg, duration = 2000) {
       toast.textContent = msg;
       toast.classList.add('show');
       setTimeout(() => toast.classList.remove('show'), duration);
     }
+
+    function toggleZoom(forceState) {
+      isZoomed = forceState !== undefined ? forceState : !isZoomed;
+      if (isZoomed) {
+        btnToggleZoom.classList.add('active');
+        zoomIcon.textContent = '↔️';
+        zoomText.textContent = '全景视图';
+        modeHint.textContent = '已放大居中验证区 (超大滑块)';
+        showToast('已放大居中验证区域，滑块更易拖动！');
+      } else {
+        btnToggleZoom.classList.remove('active');
+        zoomIcon.textContent = '🔍';
+        zoomText.textContent = '放大验证区';
+        modeHint.textContent = '全景模式 (可点击按钮)';
+        showToast('已切回全局全景模式');
+      }
+      renderFrame();
+    }
+
+    btnToggleZoom.addEventListener('click', () => toggleZoom());
+
+    btnQuickConnect.addEventListener('click', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'click_connect' }));
+        showToast('正在自动连接实例并唤起验证码...');
+        setTimeout(() => toggleZoom(true), 2000);
+      }
+    });
 
     function connectWebSocket() {
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -724,7 +883,7 @@ export class H5Server {
           } else if (msg.type === 'toast') {
             showToast(msg.message);
           } else if (msg.type === 'status') {
-            showToast(msg.message, 3000);
+            showToast(msg.message, 3500);
           }
         } catch (e) {}
       };
@@ -741,15 +900,27 @@ export class H5Server {
       };
     }
 
-    // Coordinate mapping from screen touch to Chrome page pixel coordinates
+    // Precise Coordinate mapping from canvas touch to actual Chrome page pixel coordinates
     function getPageCoords(clientX, clientY) {
       const rect = canvas.getBoundingClientRect();
-      const scaleX = imgWidth / rect.width;
-      const scaleY = imgHeight / rect.height;
-      return {
-        x: Math.round((clientX - rect.left) * scaleX),
-        y: Math.round((clientY - rect.top) * scaleY),
-      };
+      const relX = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const relY = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+
+      if (!isZoomed) {
+        return {
+          x: Math.round(relX * fullWidth),
+          y: Math.round(relY * fullHeight),
+        };
+      } else {
+        const cropW = Math.min(fullWidth * 0.45, 520);
+        const cropH = Math.min(fullHeight * 0.55, 420);
+        const cropX = (fullWidth - cropW) / 2;
+        const cropY = (fullHeight - cropH) / 2;
+        return {
+          x: Math.round(cropX + relX * cropW),
+          y: Math.round(cropY + relY * cropH),
+        };
+      }
     }
 
     function sendInput(event, clientX, clientY, buttons = 1) {
@@ -769,9 +940,14 @@ export class H5Server {
       e.preventDefault();
       const touch = e.touches[0];
       isTouching = true;
+      touchStartTime = Date.now();
+      startX = touch.clientX;
+      startY = touch.clientY;
+
       touchCursor.style.display = 'block';
       touchCursor.style.left = touch.clientX + 'px';
       touchCursor.style.top = touch.clientY + 'px';
+
       sendInput('mousedown', touch.clientX, touch.clientY, 1);
     }, { passive: false });
 
@@ -790,7 +966,15 @@ export class H5Server {
       isTouching = false;
       touchCursor.style.display = 'none';
       const touch = e.changedTouches[0];
-      sendInput('mouseup', touch.clientX, touch.clientY, 0);
+      const duration = Date.now() - touchStartTime;
+      const dist = Math.hypot(touch.clientX - startX, touch.clientY - startY);
+
+      if (duration < 250 && dist < 8) {
+        // Quick tap: send explicit single click
+        sendInput('click', touch.clientX, touch.clientY, 1);
+      } else {
+        sendInput('mouseup', touch.clientX, touch.clientY, 0);
+      }
     }, { passive: false });
 
     window.addEventListener('touchcancel', () => {
@@ -804,6 +988,9 @@ export class H5Server {
     // Mouse Event Handlers for Desktop Testing
     canvas.addEventListener('mousedown', (e) => {
       isTouching = true;
+      touchStartTime = Date.now();
+      startX = e.clientX;
+      startY = e.clientY;
       sendInput('mousedown', e.clientX, e.clientY, 1);
     });
 
@@ -815,7 +1002,13 @@ export class H5Server {
     window.addEventListener('mouseup', (e) => {
       if (!isTouching) return;
       isTouching = false;
-      sendInput('mouseup', e.clientX, e.clientY, 0);
+      const duration = Date.now() - touchStartTime;
+      const dist = Math.hypot(e.clientX - startX, e.clientY - startY);
+      if (duration < 250 && dist < 8) {
+        sendInput('click', e.clientX, e.clientY, 1);
+      } else {
+        sendInput('mouseup', e.clientX, e.clientY, 0);
+      }
     });
 
     btnRefresh.addEventListener('click', () => {
