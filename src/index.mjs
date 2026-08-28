@@ -153,13 +153,14 @@ Options:
   const successInterval = config.feishu?.notifyOnSuccessIntervalRounds || 6;
   scheduler.on('roundComplete', async (summary) => {
     if (notifier.enabled) {
-      if (summary.failed > 0) {
+      const nonCaptchaFailed = summary.results.filter(r => !r.ok && r.error !== 'Captcha verification required');
+      if (nonCaptchaFailed.length > 0) {
         await notifier.sendAlert(
           '保活轮询异常告警',
           `第 #${summary.roundNumber} 轮保活完成，共 ${summary.total} 个实例，成功 ${summary.succeeded} 个，失败 ${summary.failed} 个。`,
-          summary.results.filter(r => !r.ok).map(r => `${r.id}: ${r.error}`).join('\n')
+          nonCaptchaFailed.map(r => `${r.id}: ${r.error}`).join('\n')
         );
-      } else if (summary.roundNumber % successInterval === 0) {
+      } else if (summary.roundNumber % successInterval === 0 && summary.failed === 0) {
         await notifier.sendStatus(summary.summary);
       }
     }

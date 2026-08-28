@@ -79,8 +79,12 @@ export class MessageHandler {
             this.scheduler.config.notebooks[0].instanceType = instanceType;
           }
           const result = await this.scheduler.runRound(null, { forceStart: true });
-          const card = CardTemplates.buildStatusCard(result.summary);
-          await this.notifier.sendCard(card, targetId);
+          
+          const hasCaptcha = result.results?.some(r => r.error === 'Captcha verification required' || r.status?.includes('Captcha'));
+          if (!hasCaptcha) {
+            const card = CardTemplates.buildStatusCard(result.summary);
+            await this.notifier.sendCard(card, targetId);
+          }
         } catch (err) {
           await this.notifier.sendCard(
             CardTemplates.buildResultCard('启动实例失败', err.message, false),
