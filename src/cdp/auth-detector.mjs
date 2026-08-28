@@ -79,16 +79,43 @@ export class AuthDetector {
       await page.goto('https://www.modelscope.cn/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForTimeout(2000);
 
-      // ModelScope login modal / iframe / QR code container
+      // Check if WeChat QR login tab/button is present and click to activate WeChat QR code
+      const wechatTabSelectors = [
+        'div:has-text("微信扫码")',
+        'span:has-text("微信扫码")',
+        'button:has-text("微信登录")',
+        'div[class*="wechat"]',
+        'div:has-text("微信")',
+        'a:has-text("微信")',
+      ];
+
+      for (const wSel of wechatTabSelectors) {
+        try {
+          const wTab = await page.$(wSel);
+          if (wTab && (await wTab.isVisible())) {
+            logger.info('Switching to WeChat QR code login tab...');
+            await wTab.click().catch(() => {});
+            await page.waitForTimeout(1000);
+            break;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // ModelScope / WeChat login modal / iframe / QR code container
       const qrSelectors = [
         'canvas[class*="qrcode"]',
         'img[class*="qrcode"]',
         'img[src*="qrcode"]',
+        'img[src*="weixin"]',
+        'img[src*="wx"]',
         'div[class*="qrcode"]',
         'div[class*="qr-code"]',
         '#login-qrcode',
         '.login-qr',
         'iframe[id*="alibaba-login-box"]',
+        'iframe[src*="login"]',
       ];
 
       let qrElement = null;

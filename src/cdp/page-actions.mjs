@@ -95,7 +95,34 @@ export class PageActions {
     let restarted = false;
     let statusDesc = 'Running';
 
-    // 1. Look for reconnect / wake / resume buttons
+    // 1. Look for ModelScope Code Editor "连接运行时" button (as in user screenshot)
+    const connectRuntimeSelectors = [
+      'button:has-text("连接运行时")',
+      'div[role="button"]:has-text("连接运行时")',
+      'a:has-text("连接运行时")',
+      '[class*="connect"]:has-text("连接运行时")',
+    ];
+
+    for (const sel of connectRuntimeSelectors) {
+      try {
+        const btn = await page.$(sel);
+        if (btn && (await btn.isVisible())) {
+          logger.warn(`[${notebookConfig.name}] Detected '连接运行时' button in Code Editor. Clicking to launch instance...`);
+          await btn.click({ timeout: 5000 });
+          await this.sleep(1500);
+
+          // Handle the "选择实例" (Select Instance) popup modal
+          const modalHandled = await this.handleSelectInstanceModal(page, notebookConfig);
+          restarted = true;
+          statusDesc = modalHandled ? 'Runtime instance connected' : 'Clicked connect runtime';
+          return { restarted, statusDesc };
+        }
+      } catch (err) {
+        logger.warn(`Error handling connect runtime button: ${err.message}`);
+      }
+    }
+
+    // 2. Look for reconnect / wake / resume buttons
     const resumeBtnSelectors = [
       'button:has-text("重新连接")',
       'button:has-text("恢复运行")',
@@ -120,7 +147,7 @@ export class PageActions {
       }
     }
 
-    // 2. If on workspace list page, check if specific instance is stopped
+    // 3. If on workspace list page, check if specific instance is stopped
     if (notebookConfig.autoStart) {
       const startBtnSelectors = [
         'button:has-text("启动")',
@@ -145,11 +172,80 @@ export class PageActions {
       }
     }
 
-    // 3. If running normally inside JupyterLab or DSW workspace, simulate mouse/keyboard activity
+    // 4. If running normally inside Code Editor / JupyterLab / DSW workspace, simulate mouse/keyboard activity
     await this.simulateUserActivity(page);
     statusDesc = 'Active & Heartbeat simulated';
 
     return { restarted, statusDesc };
+  }
+
+  /**
+   * Handle "选择实例" modal dialog in Code Editor
+   * @param {import('playwright-core').Page} page
+   * @param {object} notebookConfig
+   */
+  static async handleSelectInstanceModal(page, notebookConfig) {
+    try {
+      const modalHeader = await page.$('div:has-text("选择实例"), h3:has-text("选择实例"), h4:has-text("选择实例")');
+      if (!modalHeader) {
+        // Check if modal container is present
+        const connectBtn = await page.$('button:has-text("连接")');
+        if (connectBtn && (await connectBtn.isVisible())) {
+          logger.info(`[${notebookConfig.name}] Found modal '连接' button, clicking...`);
+          await connectBtn.click({ timeout: 5000 });
+          await this.sleep(3000);
+          return true;
+        }
+        return false;
+      }
+
+      // Check instance type preference (e.g., 'GPU', 'AMD GPU', 'CPU')
+      const targetType = (notebookConfig.instanceType || '').toUpperCase();
+      if (targetType.includes('GPU') && !targetType.includes('AMD')) {
+        const gpuTab = await page.$('div:has-text("GPU 类型"), button:has-text("GPU 类型"), span:has-text("GPU 类型")');
+        if (gpuTab && (await gpuTab.isVisible())) {
+          logger.info(`[${notebookConfig.name}] Selecting GPU instance tab...`);
+          await gpuTab.click().catch(() => {});
+          await this.sleep(500);
+        }
+      } else if (targetType.includes('AMD')) {
+        const amdTab = await page.$('div:has-text("AMD GPU类型"), button:has-text("AMD GPU类型"), span:has-text("AMD GPU类型")');
+        if (amdTab && (await amdTab.isVisible())) {
+          logger.info(`[${notebookConfig.name}] Selecting AMD GPU instance tab...`);
+          await amdTab.click().catch(() => {});
+          await this.sleep(500);
+        }
+      } else if (targetType.includes('CPU')) {
+        const cpuTab = await page.$('div:has-text("CPU 类型"), button:has-text("CPU 类型"), span:has-text("CPU 类型")');
+        if (cpuTab && (await cpuTab.isVisible())) {
+          logger.info(`[${notebookConfig.name}] Selecting CPU instance tab...`);
+          await cpuTab.click().catch(() => {});
+          await this.sleep(500);
+        }
+      }
+
+      // Click the confirmation "连接" (Connect) button in the modal
+      const confirmConnectSelectors = [
+        'button:has-text("连接")',
+        'button.ant-btn-primary:has-text("连接")',
+        'div[role="dialog"] button:has-text("连接")',
+      ];
+
+      for (const cSel of confirmConnectSelectors) {
+        const confirmBtn = await page.$(cSel);
+        if (confirmBtn && (await confirmBtn.isVisible())) {
+          logger.info(`[${notebookConfig.name}] Clicking modal confirmation button '连接'...`);
+          await confirmBtn.click({ timeout: 5000 });
+          await this.sleep(4000);
+          return true;
+        }
+      }
+
+      return false;
+    } catch (err) {
+      logger.warn(`Error handling select instance modal: ${err.message}`);
+      return false;
+    }
   }
 
   /**

@@ -30,6 +30,7 @@
       "name": "Qwen2.5微调环境",
       "url": "https://www.modelscope.cn/code/workspace",
       "matchPattern": "workspace",
+      "instanceType": "GPU",
       "action": "smart",
       "autoStart": true,
       "enabled": true
@@ -39,6 +40,7 @@
       "name": "SDXL生图环境",
       "url": "https://www.modelscope.cn/code/workspace",
       "matchPattern": "workspace",
+      "instanceType": "CPU",
       "action": "refresh",
       "autoStart": false,
       "enabled": true
