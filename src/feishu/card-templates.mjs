@@ -202,7 +202,7 @@ export class CardTemplates {
   /**
    * Build Captcha Slider Verification Card
    */
-  static buildCaptchaCard(imageKey, tip = '请根据图片选择滑块拖动比例') {
+  static buildCaptchaCard(imageKey, tip = '请根据下方标尺图片选择滑块拖动比例') {
     return {
       config: { wide_screen_mode: true },
       header: {
@@ -214,7 +214,7 @@ export class CardTemplates {
           tag: 'div',
           text: {
             tag: 'lark_md',
-            content: `**检测到安全验证（拼图缺口 / 旋转还原 / 滑块）**\n${tip}\n\n💡 **操作方法**：\n• **拼图缺口**：估算缺口在整图的横向位置（最左=0%，中间=50%，最右=100%）\n• **旋转还原**：估算图片旋转回正所需的拖动幅度\n• 可直接点击下方快捷比例按钮，或在聊天框发送 \`/slide <数值>\`（例如 \`/slide 45\`）进行精准拖动。`,
+            content: `**已附带网格参考线与刻度标尺** 📐\n${tip}\n\n💡 **对照说明**：\n• 缺口或旋转物体在整张图横向对应的 **底部刻度（0%~100%）** 即为滑动比例\n• 可点击下方快捷比例或微调按钮，也可在聊天框直接输入 \`/slide <数值>\`（如 \`/slide 43\`）`,
           },
         },
         {
@@ -235,9 +235,15 @@ export class CardTemplates {
             },
             {
               tag: 'button',
-              text: { tag: 'plain_text', content: '35%' },
+              text: { tag: 'plain_text', content: '30%' },
               type: 'default',
-              value: { action: 'slider_drag', percent: 35 },
+              value: { action: 'slider_drag', percent: 30 },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '40%' },
+              type: 'default',
+              value: { action: 'slider_drag', percent: 40 },
             },
             {
               tag: 'button',
@@ -247,15 +253,44 @@ export class CardTemplates {
             },
             {
               tag: 'button',
-              text: { tag: 'plain_text', content: '65%' },
+              text: { tag: 'plain_text', content: '60%' },
               type: 'default',
-              value: { action: 'slider_drag', percent: 65 },
+              value: { action: 'slider_drag', percent: 60 },
             },
             {
               tag: 'button',
-              text: { tag: 'plain_text', content: '80%' },
+              text: { tag: 'plain_text', content: '70%' },
               type: 'default',
-              value: { action: 'slider_drag', percent: 80 },
+              value: { action: 'slider_drag', percent: 70 },
+            },
+          ],
+        },
+        {
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '⏪ -10%' },
+              type: 'default',
+              value: { action: 'slider_adjust', delta: -10 },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '◀️ -3%' },
+              type: 'default',
+              value: { action: 'slider_adjust', delta: -3 },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '▶️ +3%' },
+              type: 'default',
+              value: { action: 'slider_adjust', delta: 3 },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '⏩ +10%' },
+              type: 'default',
+              value: { action: 'slider_adjust', delta: 10 },
             },
           ],
         },

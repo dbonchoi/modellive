@@ -18,6 +18,7 @@ export class MessageHandler {
     this.notifier = notifier;
     this.scheduler = scheduler;
     this.browserManager = browserManager;
+    this.lastSliderPercent = 50;
   }
 
   /**
@@ -102,6 +103,7 @@ export class MessageHandler {
       case '滑动':
       case '拖动': {
         const percent = Number(args[0]) || 50;
+        this.lastSliderPercent = percent;
         await this.handleSlideAction(targetId, percent);
         break;
       }
@@ -208,7 +210,16 @@ export class MessageHandler {
 
       case 'slider_drag': {
         const percent = Number(actionData.percent) || 50;
+        this.lastSliderPercent = percent;
         await this.handleSlideAction(senderId, percent);
+        break;
+      }
+
+      case 'slider_adjust': {
+        const delta = Number(actionData.delta) || 0;
+        const targetPercent = Math.max(0, Math.min(100, (this.lastSliderPercent || 50) + delta));
+        this.lastSliderPercent = targetPercent;
+        await this.handleSlideAction(senderId, targetPercent);
         break;
       }
 

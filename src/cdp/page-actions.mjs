@@ -371,14 +371,107 @@ export class PageActions {
       }
 
       logger.info('Capturing security verification captcha modal screenshot...');
-      const buffer = await captchaModal.screenshot({ type: 'png' }).catch(async () => {
+      let buffer = await captchaModal.screenshot({ type: 'png' }).catch(async () => {
         return await page.screenshot({ fullPage: false, type: 'png' });
       });
+
+      if (buffer) {
+        buffer = await this.addVisualRuler(page, buffer);
+      }
 
       return { visible: true, buffer };
     } catch (err) {
       logger.warn(`Error checking captcha modal: ${err.message}`);
       return { visible: false, buffer: null };
+    }
+  }
+
+  /**
+   * Draw vertical guide grid lines and percentage ruler bar onto captcha image.
+   * @param {import('playwright-core').Page} page
+   * @param {Buffer} imageBuffer
+   * @returns {Promise<Buffer>}
+   */
+  static async addVisualRuler(page, imageBuffer) {
+    try {
+      const base64 = imageBuffer.toString('base64');
+      const rulerBase64 = await page.evaluate(async (b64) => {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height + 42;
+            const ctx = canvas.getContext('2d');
+
+            // 1. Draw base image
+            ctx.drawImage(img, 0, 0);
+
+            const totalW = img.width;
+            const totalH = img.height;
+
+            // 2. Draw vertical dashed reference grid lines across the image
+            for (let p = 10; p <= 90; p += 10) {
+              const x = Math.round((totalW * p) / 100);
+              ctx.strokeStyle = (p % 20 === 0) ? 'rgba(0, 240, 255, 0.45)' : 'rgba(255, 230, 0, 0.35)';
+              ctx.lineWidth = (p % 20 === 0) ? 2 : 1;
+              ctx.setLineDash([5, 4]);
+              ctx.beginPath();
+              ctx.moveTo(x, 0);
+              ctx.lineTo(x, totalH);
+              ctx.stroke();
+            }
+            ctx.setLineDash([]); // Reset line dash
+
+            // 3. Draw Ruler bottom bar
+            ctx.fillStyle = '#181825';
+            ctx.fillRect(0, totalH, totalW, 42);
+
+            // Divider line
+            ctx.strokeStyle = '#585b70';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, totalH);
+            ctx.lineTo(totalW, totalH);
+            ctx.stroke();
+
+            // 4. Draw ruler scale ticks and percentage text labels
+            ctx.font = 'bold 12px "Segoe UI", Arial, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            for (let p = 0; p <= 100; p += 10) {
+              const x = Math.round((totalW * p) / 100);
+              const isMajor = p % 20 === 0;
+
+              // Tick mark
+              ctx.strokeStyle = isMajor ? '#89dceb' : '#f9e2af';
+              ctx.lineWidth = isMajor ? 2 : 1;
+              ctx.beginPath();
+              ctx.moveTo(x, totalH);
+              ctx.lineTo(x, totalH + (isMajor ? 12 : 7));
+              ctx.stroke();
+
+              // Percentage text
+              ctx.fillStyle = (p === 0 || p === 100) ? '#a6adc8' : (isMajor ? '#89dceb' : '#f9e2af');
+              const textX = p === 0 ? x + 16 : (p === 100 ? x - 18 : x);
+              ctx.fillText(`${p}%`, textX, totalH + 25);
+            }
+
+            resolve(canvas.toDataURL('image/png').split(',')[1]);
+          };
+          img.onerror = () => resolve(b64);
+          img.src = 'data:image/png;base64,' + b64;
+        });
+      }, base64);
+
+      if (rulerBase64) {
+        return Buffer.from(rulerBase64, 'base64');
+      }
+      return imageBuffer;
+    } catch (err) {
+      logger.warn(`Visual ruler overlay minor error: ${err.message}`);
+      return imageBuffer;
     }
   }
 
