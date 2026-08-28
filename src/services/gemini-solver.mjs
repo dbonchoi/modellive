@@ -39,7 +39,7 @@ export class GeminiSolver {
       return { success: false, error: `Failed to save temporary captcha image: ${err.message}` };
     }
 
-    const prompt = `Please view the image file at ${tempImgPath} using view_file. Analyze the security verification captcha. Locate the movable puzzle piece (e.g. at the bottom left) and find its matching target notch / gap / restoration spot in the main picture. Calculate the horizontal target percentage (0.0 to 100.0) from the left edge of the main picture to the target notch center. Return ONLY a valid JSON object with keys: type, percent, target_description, confidence.`;
+    const prompt = `Please view the image file at ${tempImgPath} using view_file. Analyze this 2D graphic puzzle artwork: locate the cutout silhouette / matching destination for the small misplaced object piece shown at the bottom-left. Calculate the horizontal position percentage (0.0 to 100.0) from the left edge of the main picture to the center of the matching slot. Return ONLY a valid JSON object with keys: type, percent, target_description, confidence.`;
 
     const args = [
       '-p',
