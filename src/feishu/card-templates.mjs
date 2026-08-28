@@ -202,116 +202,140 @@ export class CardTemplates {
   /**
    * Build Captcha Slider Verification Card
    */
-  static buildCaptchaCard(imageKey, tip = '请根据下方标尺图片选择滑块拖动比例') {
+  static buildCaptchaCard(imageKey, tip = '请根据下方标尺图片选择滑块拖动比例', h5Url = '') {
+    const elements = [
+      {
+        tag: 'div',
+        text: {
+          tag: 'lark_md',
+          content: `**检测到安全验证** 🧩\n${tip}\n\n💡 **推荐操作**：\n• **方式一（强烈推荐）**：点击下方【📱 打开手机实时滑动面板】，在手机上触摸拖动滑块，图片会实时跟着旋转回正，体验如同在电脑上操作！\n• **方式二**：直接点击下方快捷比例按钮，或在聊天框发送 \`/slide <数值>\`（如 \`/slide 45\`）。`,
+        },
+      },
+    ];
+
+    if (h5Url) {
+      elements.push({
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '📱 打开手机实时滑动面板 (推荐)' },
+            type: 'primary',
+            multi_url: {
+              url: h5Url,
+              pc_url: h5Url,
+              android_url: h5Url,
+              ios_url: h5Url,
+            },
+          },
+        ],
+      });
+    }
+
+    elements.push(
+      {
+        tag: 'img',
+        img_key: imageKey,
+        alt: { tag: 'plain_text', content: 'Captcha Verification' },
+        mode: 'fit_horizontal',
+      },
+      { tag: 'hr' },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '20%' },
+            type: 'default',
+            value: { action: 'slider_drag', percent: 20 },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '30%' },
+            type: 'default',
+            value: { action: 'slider_drag', percent: 30 },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '40%' },
+            type: 'default',
+            value: { action: 'slider_drag', percent: 40 },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '50%' },
+            type: 'primary',
+            value: { action: 'slider_drag', percent: 50 },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '60%' },
+            type: 'default',
+            value: { action: 'slider_drag', percent: 60 },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '70%' },
+            type: 'default',
+            value: { action: 'slider_drag', percent: 70 },
+          },
+        ],
+      },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '⏪ -10%' },
+            type: 'default',
+            value: { action: 'slider_adjust', delta: -10 },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '◀️ -3%' },
+            type: 'default',
+            value: { action: 'slider_adjust', delta: -3 },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '▶️ +3%' },
+            type: 'default',
+            value: { action: 'slider_adjust', delta: 3 },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '⏩ +10%' },
+            type: 'default',
+            value: { action: 'slider_adjust', delta: 10 },
+          },
+        ],
+      },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '🔄 刷新换一张' },
+            type: 'default',
+            value: { action: 'captcha_refresh' },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '✅ 我已在电脑端完成' },
+            type: 'primary',
+            value: { action: 'confirm_captcha' },
+          },
+        ],
+      }
+    );
+
     return {
       config: { wide_screen_mode: true },
       header: {
         title: { tag: 'plain_text', content: '🧩 ModelScope 连接安全验证' },
         template: 'orange',
       },
-      elements: [
-        {
-          tag: 'div',
-          text: {
-            tag: 'lark_md',
-            content: `**已附带网格参考线与刻度标尺** 📐\n${tip}\n\n💡 **对照说明**：\n• 缺口或旋转物体在整张图横向对应的 **底部刻度（0%~100%）** 即为滑动比例\n• 可点击下方快捷比例或微调按钮，也可在聊天框直接输入 \`/slide <数值>\`（如 \`/slide 43\`）`,
-          },
-        },
-        {
-          tag: 'img',
-          img_key: imageKey,
-          alt: { tag: 'plain_text', content: 'Captcha Verification' },
-          mode: 'fit_horizontal',
-        },
-        { tag: 'hr' },
-        {
-          tag: 'action',
-          actions: [
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '20%' },
-              type: 'default',
-              value: { action: 'slider_drag', percent: 20 },
-            },
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '30%' },
-              type: 'default',
-              value: { action: 'slider_drag', percent: 30 },
-            },
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '40%' },
-              type: 'default',
-              value: { action: 'slider_drag', percent: 40 },
-            },
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '50%' },
-              type: 'primary',
-              value: { action: 'slider_drag', percent: 50 },
-            },
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '60%' },
-              type: 'default',
-              value: { action: 'slider_drag', percent: 60 },
-            },
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '70%' },
-              type: 'default',
-              value: { action: 'slider_drag', percent: 70 },
-            },
-          ],
-        },
-        {
-          tag: 'action',
-          actions: [
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '⏪ -10%' },
-              type: 'default',
-              value: { action: 'slider_adjust', delta: -10 },
-            },
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '◀️ -3%' },
-              type: 'default',
-              value: { action: 'slider_adjust', delta: -3 },
-            },
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '▶️ +3%' },
-              type: 'default',
-              value: { action: 'slider_adjust', delta: 3 },
-            },
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '⏩ +10%' },
-              type: 'default',
-              value: { action: 'slider_adjust', delta: 10 },
-            },
-          ],
-        },
-        {
-          tag: 'action',
-          actions: [
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '🔄 刷新换一张' },
-              type: 'default',
-              value: { action: 'captcha_refresh' },
-            },
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '✅ 我已在电脑端完成' },
-              type: 'primary',
-              value: { action: 'confirm_captcha' },
-            },
-          ],
-        },
-      ],
+      elements,
     };
   }
 

@@ -132,13 +132,14 @@ export class FeishuNotifier {
   /**
    * Send Captcha Slider card with uploaded image buffer.
    */
-  async sendCaptchaCard(imageBuffer, receiveId = null, tip = '') {
+  async sendCaptchaCard(imageBuffer, receiveId = null, tip = '', h5Url = '') {
     const imageKey = await this.uploadImage(imageBuffer);
     if (!imageKey) {
       return await this.sendAlert('安全验证提示', '检测到实例连接触发了滑块验证，请在本地电脑屏幕中完成滑动。');
     }
 
-    const card = CardTemplates.buildCaptchaCard(imageKey, tip);
+    const finalH5Url = h5Url || this.h5Url || '';
+    const card = CardTemplates.buildCaptchaCard(imageKey, tip, finalH5Url);
     return await this.sendCard(card, receiveId);
   }
 }

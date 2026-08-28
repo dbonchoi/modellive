@@ -14,6 +14,7 @@ import { stateStore } from './engine/state-store.mjs';
 import { FeishuNotifier } from './feishu/notifier.mjs';
 import { MessageHandler } from './feishu/message-handler.mjs';
 import { FeishuWSClient } from './feishu/ws-client.mjs';
+import { H5Server } from './server/h5-server.mjs';
 
 let shuttingDown = false;
 
@@ -149,6 +150,17 @@ Options:
     await wsClient.start();
   }
 
+  // Initialize H5 Interactive Slider Web Server
+  const h5Server = new H5Server({
+    port: config.webServer?.port || 3000,
+    publicUrl: config.webServer?.publicUrl || '',
+    browserManager,
+    scheduler,
+    notifier,
+  });
+  await h5Server.start();
+  notifier.h5Url = h5Server.getUrl();
+
   // Hook scheduler events to Feishu Notifier
   const successInterval = config.feishu?.notifyOnSuccessIntervalRounds || 6;
   scheduler.on('roundComplete', async (summary) => {
@@ -179,15 +191,22 @@ Options:
   });
 
   scheduler.on('captchaRequired', async ({ notebook, buffer }) => {
+    h5Server.setCaptchaBuffer(buffer);
     if (notifier.enabled) {
       logger.warn(`[${notebook.name}] Pushing captcha verification card to Feishu...`);
-      await notifier.sendCaptchaCard(buffer, null, `实例【${notebook.name}】在连接时触发了图片滑块验证`);
+      await notifier.sendCaptchaCard(
+        buffer,
+        null,
+        `实例【${notebook.name}】在连接时触发了图片滑块验证`,
+        h5Server.getUrl()
+      );
     }
   });
 
   // Setup graceful cleanup
   setupSignals(async () => {
     scheduler.stop();
+    await h5Server.stop();
     await wsClient.stop();
     await browserManager.disconnect();
     await removePidFile(config.pidFile);
