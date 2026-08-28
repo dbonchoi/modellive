@@ -20,7 +20,7 @@ export function getLocalIp() {
 }
 
 /**
- * Live Remote Control & Screencast Web Server for Real-Time Mobile Chrome Interaction.
+ * Dual-Mode H5 Web Server: Discrete Big-Button Fine-Tuner & Live Remote Screencast.
  */
 export class H5Server {
   /**
@@ -42,7 +42,7 @@ export class H5Server {
     this.cdpSession = null;
     this.activeClients = new Set();
     this.currentCaptchaBuffer = null;
-    this.lastPercent = 50;
+    this.lastPercent = 45.0;
     this.isScreencasting = false;
   }
 
@@ -85,7 +85,7 @@ export class H5Server {
         }
 
         try {
-          if (url.pathname === '/captcha' || url.pathname === '/' || url.pathname === '/live') {
+          if (url.pathname === '/captcha' || url.pathname === '/' || url.pathname === '/tuner') {
             this.handleServeH5(req, res);
           } else if (url.pathname === '/api/captcha-state') {
             await this.handleGetState(req, res);
@@ -93,6 +93,10 @@ export class H5Server {
             await this.handleSubmitSlide(req, res);
           } else if (url.pathname === '/api/refresh-captcha' && req.method === 'POST') {
             await this.handleRefreshCaptcha(req, res);
+          } else if (url.pathname === '/api/wake-modal' && req.method === 'POST') {
+            await this.handleWakeModal(req, res);
+          } else if (url.pathname === '/api/check-status') {
+            await this.handleCheckStatus(req, res);
           } else {
             res.writeHead(404, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Not Found' }));
@@ -104,13 +108,13 @@ export class H5Server {
         }
       });
 
-      // Attach WebSocket Server for Real-Time Low-Latency Screencast & Input Streaming
+      // Attach WebSocket Server for optional live screencast & input streaming
       this.wss = new WebSocketServer({ server: this.server, path: '/stream' });
       this.setupWebSocketHandlers();
 
       this.server.listen(this.port, '0.0.0.0', () => {
         const h5Url = this.getUrl();
-        logger.success(`[H5Server] Live Screencast Remote Control Server listening on ${h5Url}`);
+        logger.success(`[H5Server] Mobile Big-Button Controller listening on ${h5Url}`);
         resolve(true);
       });
 
@@ -122,13 +126,11 @@ export class H5Server {
   }
 
   /**
-   * Setup WebSocket connection and CDP screencast bridge.
+   * Setup WebSocket connection for optional live screencasting.
    */
   setupWebSocketHandlers() {
     this.wss.on('connection', async (ws) => {
       this.activeClients.add(ws);
-      logger.info(`[H5Server] Mobile client connected to Live Stream (Active clients: ${this.activeClients.size})`);
-
       try {
         await this.ensureCdpScreencast();
       } catch (err) {
@@ -146,7 +148,6 @@ export class H5Server {
 
       ws.on('close', () => {
         this.activeClients.delete(ws);
-        logger.info(`[H5Server] Mobile client disconnected (Active clients: ${this.activeClients.size})`);
         if (this.activeClients.size === 0) {
           this.stopCdpScreencast().catch(() => {});
         }
@@ -167,14 +168,10 @@ export class H5Server {
     }
 
     const page = await this.browserManager.getPrimaryPage();
-    if (!page) {
-      logger.warn('[H5Server] No primary page available for screencast.');
-      return;
-    }
+    if (!page) return;
 
     if (!this.cdpSession) {
       this.cdpSession = await page.context().newCDPSession(page);
-
       this.cdpSession.on('Page.screencastFrame', async ({ data, sessionId, metadata }) => {
         try {
           await this.cdpSession.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
@@ -191,10 +188,9 @@ export class H5Server {
       });
     }
 
-    logger.info('[H5Server] Starting 30FPS CDP Live Screencast...');
     await this.cdpSession.send('Page.startScreencast', {
       format: 'jpeg',
-      quality: 85,
+      quality: 80,
       maxWidth: 1280,
       maxHeight: 800,
       everyNthFrame: 1,
@@ -211,123 +207,22 @@ export class H5Server {
         await this.cdpSession.send('Page.stopScreencast').catch(() => {});
       } catch {}
       this.isScreencasting = false;
-      logger.info('[H5Server] Stopped CDP Screencast (no active viewers).');
     }
   }
 
   /**
-   * Handle incoming touch/mouse input events from mobile browser.
+   * Handle incoming messages from WS.
    */
   async handleClientMessage(msg, ws) {
-    if (!this.cdpSession) return;
-
-    if (msg.type === 'input') {
-      const { event, x, y, buttons } = msg;
-      try {
-        if (event === 'mousedown') {
-          await this.cdpSession.send('Input.dispatchMouseEvent', {
-            type: 'mousePressed',
-            x: Math.round(x),
-            y: Math.round(y),
-            button: 'left',
-            clickCount: 1,
-          });
-        } else if (event === 'mousemove') {
-          await this.cdpSession.send('Input.dispatchMouseEvent', {
-            type: 'mouseMoved',
-            x: Math.round(x),
-            y: Math.round(y),
-            button: 'left',
-            buttons: buttons !== undefined ? buttons : 1,
-          });
-        } else if (event === 'mouseup') {
-          await this.cdpSession.send('Input.dispatchMouseEvent', {
-            type: 'mouseReleased',
-            x: Math.round(x),
-            y: Math.round(y),
-            button: 'left',
-          });
-
-          // Check if captcha is passed after mouse release
-          setTimeout(async () => {
-            try {
-              const page = await this.browserManager.getPrimaryPage();
-              const cap = await PageActions.checkAndCaptureCaptcha(page);
-              if (!cap.visible) {
-                ws.send(JSON.stringify({ type: 'status', passed: true, message: '🎉 验证通过！实例正在继续连接运行...' }));
-                if (this.notifier) {
-                  this.notifier.sendText(
-                    '🎉 ModelScope 实例已在手机实时远程操作中完成验证并成功连接！',
-                    this.notifier.config?.feishu?.adminUserIds?.[0]
-                  ).catch(() => {});
-                }
-              }
-            } catch {}
-          }, 1500);
-        } else if (event === 'click') {
-          // Dedicated click event: press then release
-          await this.cdpSession.send('Input.dispatchMouseEvent', {
-            type: 'mousePressed',
-            x: Math.round(x),
-            y: Math.round(y),
-            button: 'left',
-            clickCount: 1,
-          });
-          await PageActions.sleep(80);
-          await this.cdpSession.send('Input.dispatchMouseEvent', {
-            type: 'mouseReleased',
-            x: Math.round(x),
-            y: Math.round(y),
-            button: 'left',
-          });
-        }
-      } catch (err) {
-        logger.warn(`[H5Server] Failed to dispatch mouse event: ${err.message}`);
-      }
-    } else if (msg.type === 'click_connect') {
-      try {
-        const page = await this.browserManager.getPrimaryPage();
-        const nbConfig = this.scheduler?.config?.notebooks?.[0] || { name: 'ModelScope', instanceType: 'CPU' };
-
-        // 1. Click "连接运行时" button if present
-        const connectBtn = await page.$('button:has-text("连接运行时"), div[role="button"]:has-text("连接运行时"), a:has-text("连接运行时")');
-        if (connectBtn && (await connectBtn.isVisible())) {
-          logger.info('[H5Server] Auto-clicking "连接运行时" button...');
-          await page.evaluate(el => el.click(), connectBtn).catch(async () => {
-            await connectBtn.click({ force: true, timeout: 3000 });
-          });
-          await PageActions.sleep(1500);
-        }
-
-        // 2. Handle "选择实例" modal and click "连接"
-        const modalRes = await PageActions.handleSelectInstanceModal(page, nbConfig, { forceStart: true });
-        ws.send(JSON.stringify({
-          type: 'toast',
-          message: modalRes.captchaBuffer ? '已唤起安全验证码！' : '正在连接实例...',
-        }));
-      } catch (err) {
-        ws.send(JSON.stringify({ type: 'toast', message: `操作异常: ${err.message}` }));
-      }
-    } else if (msg.type === 'refresh') {
-      try {
-        const page = await this.browserManager.getPrimaryPage();
-        await PageActions.refreshCaptcha(page);
-        ws.send(JSON.stringify({ type: 'toast', message: '已刷新验证码图片' }));
-      } catch (err) {
-        ws.send(JSON.stringify({ type: 'toast', message: `刷新失败: ${err.message}` }));
-      }
-    } else if (msg.type === 'check') {
-      try {
-        const page = await this.browserManager.getPrimaryPage();
-        const cap = await PageActions.checkAndCaptureCaptcha(page);
-        ws.send(JSON.stringify({
-          type: 'status',
-          passed: !cap.visible,
-          message: !cap.visible ? '🎉 验证已完成，实例正在运行中！' : '验证尚未通过，请拖动滑块完成拼图。',
-        }));
-      } catch (err) {
-        ws.send(JSON.stringify({ type: 'status', passed: false, message: err.message }));
-      }
+    if (msg.type === 'slide') {
+      const percent = Number(msg.percent) || 45;
+      const page = await this.browserManager.getPrimaryPage();
+      const dragResult = await PageActions.executeSlideDrag(page, percent);
+      ws.send(JSON.stringify({
+        type: 'slide_result',
+        success: dragResult.success,
+        message: dragResult.message,
+      }));
     }
   }
 
@@ -354,7 +249,7 @@ export class H5Server {
   }
 
   /**
-   * Get latest captcha state (Fallback API).
+   * Get latest captcha state.
    */
   async handleGetState(req, res) {
     try {
@@ -364,12 +259,14 @@ export class H5Server {
       const page = await this.browserManager.getPrimaryPage();
       const cap = await PageActions.checkAndCaptureCaptcha(page);
 
-      const buf = cap.rawBuffer || cap.buffer || this.currentCaptchaBuffer;
+      const buf = cap.buffer || cap.rawBuffer || this.currentCaptchaBuffer;
       if (buf) {
         this.currentCaptchaBuffer = buf;
         base64 = buf.toString('base64');
         active = true;
       }
+
+      const isRunning = await PageActions.isInstanceRunning(page);
 
       res.writeHead(200, {
         'Content-Type': 'application/json',
@@ -377,6 +274,7 @@ export class H5Server {
       });
       res.end(JSON.stringify({
         active,
+        isRunning,
         imageBase64: base64,
         lastPercent: this.lastPercent,
       }));
@@ -387,7 +285,63 @@ export class H5Server {
   }
 
   /**
-   * Handle slide execution submitted from H5 (Fallback mode).
+   * Handle wake modal & trigger captcha on PC.
+   */
+  async handleWakeModal(req, res) {
+    try {
+      const page = await this.browserManager.getPrimaryPage();
+      const nbConfig = this.scheduler?.config?.notebooks?.[0] || { name: 'ModelScope工作空间', instanceType: 'CPU' };
+
+      const connectBtn = await page.$('button:has-text("连接运行时"), div[role="button"]:has-text("连接运行时"), a:has-text("连接运行时")');
+      if (connectBtn && (await connectBtn.isVisible())) {
+        await page.evaluate(el => el.click(), connectBtn).catch(async () => {
+          await connectBtn.click({ force: true, timeout: 3000 });
+        });
+        await PageActions.sleep(1500);
+      }
+
+      const modalRes = await PageActions.handleSelectInstanceModal(page, nbConfig, { forceStart: true });
+      const cap = await PageActions.checkAndCaptureCaptcha(page);
+      const buf = cap.buffer || cap.rawBuffer || modalRes.captchaBuffer;
+
+      let imageBase64 = null;
+      if (buf) {
+        this.currentCaptchaBuffer = buf;
+        imageBase64 = buf.toString('base64');
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        message: imageBase64 ? '已成功唤起验证码！' : '正在连接或已处于运行状态。',
+        imageBase64,
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
+  /**
+   * Check running status.
+   */
+  async handleCheckStatus(req, res) {
+    try {
+      const page = await this.browserManager.getPrimaryPage();
+      const running = await PageActions.isInstanceRunning(page);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        running,
+        message: running ? '🎉 实例处于运行中，PC 守护进程正持续保活！' : '实例尚未连接，请点击连接或完成滑动。',
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
+  /**
+   * Handle slide execution submitted from H5.
    */
   async handleSubmitSlide(req, res) {
     let body = '';
@@ -395,18 +349,24 @@ export class H5Server {
     req.on('end', async () => {
       try {
         const data = JSON.parse(body || '{}');
-        const percent = Math.max(0, Math.min(100, Number(data.percent) || 50));
+        const percent = Math.max(0, Math.min(100, Number(data.percent) || 45));
         this.lastPercent = percent;
 
-        logger.info(`[H5Server] Received slide command from phone: ${percent.toFixed(1)}%`);
+        logger.info(`[H5Server] Received button slide command from phone: ${percent.toFixed(1)}%`);
 
         const page = await this.browserManager.getPrimaryPage();
         const dragResult = await PageActions.executeSlideDrag(page, percent);
 
+        const targetUser = this.notifier?.config?.feishu?.adminUserIds?.[0];
+
+        let postDragBase64 = null;
+        if (dragResult.postDragBuffer) {
+          postDragBase64 = dragResult.postDragBuffer.toString('base64');
+        }
+
         if (dragResult.success) {
           this.currentCaptchaBuffer = null;
           if (this.notifier && this.notifier.enabled) {
-            const targetUser = this.notifier.config?.feishu?.adminUserIds?.[0];
             if (dragResult.postDragBuffer) {
               await this.notifier.sendImageCard(
                 dragResult.postDragBuffer,
@@ -430,10 +390,10 @@ export class H5Server {
           res.end(JSON.stringify({
             success: true,
             message: '🎉 验证通过！ModelScope 实例连接成功！',
+            postDragBase64,
           }));
         } else {
           if (this.notifier && this.notifier.enabled) {
-            const targetUser = this.notifier.config?.feishu?.adminUserIds?.[0];
             const feedbackImg = dragResult.postDragBuffer || dragResult.newCaptchaBuffer;
             if (feedbackImg) {
               await this.notifier.sendCaptchaCard(
@@ -452,7 +412,8 @@ export class H5Server {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             success: false,
-            message: '验证未通过，电脑端实际落点已同步发送至飞书。请在手机上微调后再次提交。',
+            message: '验证未通过，请查看下方电脑端实际落点，微调百分比后再次提交。',
+            postDragBase64,
             newImageBase64: newImage,
           }));
         }
@@ -470,7 +431,7 @@ export class H5Server {
     try {
       const page = await this.browserManager.getPrimaryPage();
       const cap = await PageActions.refreshCaptcha(page);
-      const buf = cap.rawBuffer || cap.buffer;
+      const buf = cap.buffer || cap.rawBuffer;
       if (buf) {
         this.currentCaptchaBuffer = buf;
         res.writeHead(200, {
@@ -485,7 +446,7 @@ export class H5Server {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: false,
-          message: '未检测到验证码，可能已自动通过。',
+          message: '未检测到验证码，可能已处于运行状态。',
         }));
       }
     } catch (err) {
@@ -495,7 +456,7 @@ export class H5Server {
   }
 
   /**
-   * Serve the responsive mobile-first live remote control H5 application.
+   * Serve the responsive mobile-first discrete button tuner H5 application.
    */
   handleServeH5(req, res) {
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -506,45 +467,42 @@ export class H5Server {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>ModelScope 远程实时操控</title>
+  <title>ModelScope 移动端辅助微调</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; touch-action: none; }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     html, body {
       width: 100%;
-      height: 100%;
-      height: 100dvh;
-      overflow: hidden;
+      min-height: 100%;
       background-color: #0b0f19;
       color: #f8fafc;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       user-select: none;
       -webkit-user-select: none;
     }
-    body {
+    .container {
+      max-width: 500px;
+      margin: 0 auto;
+      padding: 12px 14px 40px;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      justify-content: space-between;
+      gap: 12px;
     }
     header {
-      width: 100%;
-      padding: 10px 14px;
-      background: #111827;
-      border-bottom: 1px solid #1f2937;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      z-index: 10;
+      padding: 8px 0;
+      border-bottom: 1px solid #1f2937;
     }
     .brand {
       display: flex;
       align-items: center;
-      gap: 6px;
-    }
-    .header-actions {
-      display: flex;
-      align-items: center;
       gap: 8px;
+    }
+    .brand h1 {
+      font-size: 15px;
+      font-weight: 700;
+      color: #f1f5f9;
     }
     .status-badge {
       font-size: 11px;
@@ -558,158 +516,227 @@ export class H5Server {
       gap: 5px;
       font-weight: 500;
     }
-    .status-badge.offline {
-      background: rgba(239, 68, 68, 0.15);
-      color: #f87171;
-      border-color: rgba(239, 68, 68, 0.3);
+    .top-actions {
+      display: flex;
+      gap: 8px;
     }
-    .status-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: #22c55e;
-      animation: pulse 1.5s infinite;
-    }
-    .status-badge.offline .status-dot {
-      background: #ef4444;
-      animation: none;
-    }
-    @keyframes pulse {
-      0% { transform: scale(0.95); opacity: 0.8; }
-      50% { transform: scale(1.2); opacity: 1; }
-      100% { transform: scale(0.95); opacity: 0.8; }
-    }
-    .btn-icon {
-      background: #1f2937;
-      border: 1px solid #374151;
-      color: #e2e8f0;
-      padding: 4px 10px;
+    .top-btn {
+      flex: 1;
+      height: 38px;
       border-radius: 8px;
+      border: 1px solid #374151;
+      background: #1f2937;
+      color: #e2e8f0;
       font-size: 12px;
-      font-weight: 500;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-    }
-    .btn-icon.active {
-      background: #2563eb;
-      border-color: #3b82f6;
-      color: #fff;
-    }
-    .viewport-container {
-      flex: 1;
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      position: relative;
-      background: #000;
-      overflow: hidden;
-    }
-    canvas#screencast {
-      max-width: 100%;
-      max-height: 100%;
-      object-fit: contain;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
-      cursor: crosshair;
-    }
-    .touch-cursor {
-      position: absolute;
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      background: rgba(59, 130, 246, 0.35);
-      border: 2px solid #60a5fa;
-      pointer-events: none;
-      transform: translate(-50%, -50%);
-      display: none;
-      z-index: 5;
-      box-shadow: 0 0 12px rgba(59, 130, 246, 0.8);
-    }
-    .quick-bar {
-      position: absolute;
-      top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(15, 23, 42, 0.88);
-      backdrop-filter: blur(10px);
-      padding: 5px 12px;
-      border-radius: 999px;
-      border: 1px solid rgba(255,255,255,0.15);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      z-index: 8;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.4);
-    }
-    .quick-btn {
-      background: rgba(255,255,255,0.1);
-      border: none;
-      color: #f1f5f9;
-      font-size: 12px;
-      font-weight: 500;
-      padding: 3px 8px;
-      border-radius: 6px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-    }
-    .quick-btn:active {
-      background: rgba(255,255,255,0.25);
-    }
-    footer {
-      width: 100%;
-      padding: 10px 14px env(safe-area-inset-bottom, 10px);
-      background: #111827;
-      border-top: 1px solid #1f2937;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      z-index: 10;
-    }
-    .footer-row {
-      width: 100%;
-      display: flex;
-      gap: 8px;
-    }
-    .btn {
-      flex: 1;
-      height: 42px;
-      border-radius: 10px;
-      border: none;
-      font-size: 13px;
       font-weight: 600;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 5px;
-      transition: all 0.15s ease;
-      touch-action: manipulation;
     }
-    .btn:active {
-      transform: scale(0.97);
+    .top-btn:active {
+      background: #374151;
     }
-    .btn-secondary {
-      background: #1e293b;
-      color: #e2e8f0;
+    .card {
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 12px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #94a3b8;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .image-container {
+      width: 100%;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 160px;
+      position: relative;
       border: 1px solid #334155;
     }
-    .btn-primary {
+    .image-container img {
+      width: 100%;
+      height: auto;
+      display: block;
+      object-fit: contain;
+    }
+    .placeholder-text {
+      color: #64748b;
+      font-size: 13px;
+      text-align: center;
+      padding: 20px;
+    }
+    .value-display-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #1e293b;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid #334155;
+    }
+    .value-label {
+      font-size: 13px;
+      color: #94a3b8;
+    }
+    .value-number {
+      font-size: 22px;
+      font-weight: 800;
+      color: #38bdf8;
+      letter-spacing: 0.5px;
+    }
+    .btn-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .preset-btn {
+      height: 42px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #f1f5f9;
+      font-size: 14px;
+      font-weight: 700;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.1s;
+    }
+    .preset-btn:active {
+      transform: scale(0.95);
+      background: #3b82f6;
+      border-color: #60a5fa;
+    }
+    .preset-btn.selected {
+      background: #2563eb;
+      border-color: #60a5fa;
+      color: #fff;
+      box-shadow: 0 0 10px rgba(37, 99, 235, 0.5);
+    }
+    .step-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 6px;
+    }
+    .step-btn {
+      height: 38px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+      font-size: 11px;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .step-btn:active {
+      background: #475569;
+    }
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 0;
+    }
+    input[type="range"] {
+      flex: 1;
+      height: 6px;
+      border-radius: 3px;
+      background: #334155;
+      outline: none;
+      -webkit-appearance: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #38bdf8;
+      cursor: pointer;
+      box-shadow: 0 0 8px rgba(56, 189, 248, 0.8);
+    }
+    .btn-submit {
+      width: 100%;
+      height: 50px;
       background: linear-gradient(135deg, #2563eb, #1d4ed8);
       color: #fff;
-      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+      font-size: 16px;
+      font-weight: 700;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4);
+      transition: all 0.15s;
     }
-    .btn-accent {
-      background: linear-gradient(135deg, #059669, #047857);
-      color: #fff;
-      box-shadow: 0 4px 12px rgba(5, 150, 105, 0.3);
+    .btn-submit:active {
+      transform: scale(0.98);
+    }
+    .btn-submit.loading {
+      opacity: 0.7;
+      pointer-events: none;
+    }
+    .option-card {
+      background: rgba(30, 41, 59, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .link-btn {
+      color: #38bdf8;
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 10px;
+      background: rgba(56, 189, 248, 0.1);
+      border-radius: 6px;
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+    .result-box {
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 13px;
+      display: none;
+    }
+    .result-box.success {
+      display: block;
+      background: rgba(34, 197, 94, 0.15);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+      color: #4ade80;
+    }
+    .result-box.error {
+      display: block;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #f87171;
     }
     .toast {
       position: fixed;
-      top: 60px;
+      top: 20px;
       left: 50%;
       transform: translateX(-50%);
       background: rgba(15, 23, 42, 0.95);
@@ -733,102 +760,122 @@ export class H5Server {
   </style>
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <span style="font-size: 16px;">📱</span>
-      <strong style="font-size: 13px; color: #f1f5f9;">Chrome 远程操控</strong>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <span style="font-size: 18px;">📱</span>
+        <h1>ModelScope 辅助微调面板</h1>
+      </div>
+      <div class="status-badge" id="statusBadge">
+        <span>🟢</span> <span id="statusText">就绪</span>
+      </div>
+    </header>
+
+    <div class="option-card">
+      <div style="font-size: 12px; color: #cbd5e1;">
+        <span>🌐 方案 1：手机直达原生滑动</span>
+      </div>
+      <a href="https://www.modelscope.cn/code/workspace" target="_blank" class="link-btn">
+        打开官网 (开启电脑模式) ↗
+      </a>
     </div>
-    <div class="header-actions">
-      <button class="btn-icon" id="btnToggleZoom">
-        <span id="zoomIcon">🔍</span> <span id="zoomText">放大验证区</span>
+
+    <div class="top-actions">
+      <button class="top-btn" id="btnWakeModal">
+        <span>⚡</span> 唤起连接验证码
       </button>
-      <div id="statusBadge" class="status-badge">
-        <span class="status-dot"></span>
-        <span id="statusText">连接中...</span>
+      <button class="top-btn" id="btnRefresh">
+        <span>🔄</span> 刷新图片
+      </button>
+      <button class="top-btn" id="btnCheck">
+        <span>✅</span> 检查状态
+      </button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>📸 验证码实时图片 (带百分比标尺)</span>
+        <span style="font-size: 11px; color: #38bdf8;" id="fetchTime">实时同步</span>
+      </div>
+      <div class="image-container" id="imageContainer">
+        <div class="placeholder-text" id="placeholderText">正在获取最新验证码图片...</div>
+        <img id="captchaImg" style="display: none;" alt="Captcha" />
       </div>
     </div>
-  </header>
 
-  <div class="viewport-container" id="viewportContainer">
-    <div class="quick-bar">
-      <button class="quick-btn" id="btnQuickConnect">
-        <span>🚀</span> 自动点击连接实例
+    <div class="card">
+      <div class="card-title">
+        <span>🎯 方案 2：轻点按键精准微调</span>
+      </div>
+
+      <div class="value-display-bar">
+        <span class="value-label">目标滑动比例</span>
+        <span class="value-number" id="valDisplay">45.0%</span>
+      </div>
+
+      <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">
+        ⚡ 快捷预设（看图对准缺口百分比直接点）：
+      </div>
+      <div class="btn-grid">
+        <button class="preset-btn" data-val="35">35%</button>
+        <button class="preset-btn" data-val="40">40%</button>
+        <button class="preset-btn" data-val="43">43%</button>
+        <button class="preset-btn selected" data-val="45">45%</button>
+        <button class="preset-btn" data-val="48">48%</button>
+        <button class="preset-btn" data-val="50">50%</button>
+        <button class="preset-btn" data-val="52">52%</button>
+        <button class="preset-btn" data-val="55">55%</button>
+        <button class="preset-btn" data-val="58">58%</button>
+        <button class="preset-btn" data-val="60">60%</button>
+        <button class="preset-btn" data-val="65">65%</button>
+        <button class="preset-btn" data-val="70">70%</button>
+      </div>
+
+      <div style="font-size: 11px; color: #94a3b8; margin-top: 6px;">
+        🔍 步进微调按键：
+      </div>
+      <div class="step-grid">
+        <button class="step-btn" data-step="-5">-5%</button>
+        <button class="step-btn" data-step="-1">-1%</button>
+        <button class="step-btn" data-step="-0.5">-0.5%</button>
+        <button class="step-btn" data-step="0.5">+0.5%</button>
+        <button class="step-btn" data-step="1">+1%</button>
+        <button class="step-btn" data-step="5">+5%</button>
+      </div>
+
+      <div class="slider-row">
+        <span style="font-size: 11px; color: #64748b;">0%</span>
+        <input type="range" id="percentSlider" min="0" max="100" step="0.5" value="45" />
+        <span style="font-size: 11px; color: #64748b;">100%</span>
+      </div>
+
+      <button class="btn-submit" id="btnSubmit">
+        <span>🚀</span> 立即在电脑端执行滑动 (<span id="btnVal">45.0%</span>)
       </button>
-      <span style="color: #475569;">|</span>
-      <span style="font-size: 11px; color: #94a3b8;" id="modeHint">双指或上方按钮可缩放</span>
+
+      <div class="result-box" id="resultBox"></div>
     </div>
-    <canvas id="screencast"></canvas>
-    <div id="touchCursor" class="touch-cursor"></div>
   </div>
-
-  <footer>
-    <div class="footer-row">
-      <button class="btn btn-secondary" id="btnRefresh">
-        <span>🔄</span> 刷新验证码
-      </button>
-      <button class="btn btn-primary" id="btnCheck">
-        <span>✅</span> 检查验证状态
-      </button>
-    </div>
-  </footer>
 
   <div id="toast" class="toast"></div>
 
   <script>
-    const canvas = document.getElementById('screencast');
-    const ctx = canvas.getContext('2d');
-    const statusBadge = document.getElementById('statusBadge');
-    const statusText = document.getElementById('statusText');
-    const touchCursor = document.getElementById('touchCursor');
-    const btnToggleZoom = document.getElementById('btnToggleZoom');
-    const zoomText = document.getElementById('zoomText');
-    const zoomIcon = document.getElementById('zoomIcon');
-    const btnQuickConnect = document.getElementById('btnQuickConnect');
+    let currentPercent = 45.0;
+
+    const captchaImg = document.getElementById('captchaImg');
+    const placeholderText = document.getElementById('placeholderText');
+    const valDisplay = document.getElementById('valDisplay');
+    const btnVal = document.getElementById('btnVal');
+    const percentSlider = document.getElementById('percentSlider');
+    const btnSubmit = document.getElementById('btnSubmit');
     const btnRefresh = document.getElementById('btnRefresh');
+    const btnWakeModal = document.getElementById('btnWakeModal');
     const btnCheck = document.getElementById('btnCheck');
+    const resultBox = document.getElementById('resultBox');
     const toast = document.getElementById('toast');
-    const modeHint = document.getElementById('modeHint');
-
-    let ws = null;
-    let fullWidth = 1280;
-    let fullHeight = 800;
-    let isTouching = false;
-    let touchStartTime = 0;
-    let startX = 0;
-    let startY = 0;
-    let isZoomed = false; // Zoom mode (crops to center modal)
-
-    let frameImage = new Image();
-
-    function renderFrame() {
-      if (!frameImage.complete || frameImage.naturalWidth === 0) return;
-
-      fullWidth = frameImage.width;
-      fullHeight = frameImage.height;
-
-      if (!isZoomed) {
-        // Fullscreen overview
-        if (canvas.width !== fullWidth || canvas.height !== fullHeight) {
-          canvas.width = fullWidth;
-          canvas.height = fullHeight;
-        }
-        ctx.drawImage(frameImage, 0, 0, fullWidth, fullHeight);
-      } else {
-        // Zoomed mode: Crop center region (width ~480px, height ~380px centered)
-        const cropW = Math.min(fullWidth * 0.45, 520);
-        const cropH = Math.min(fullHeight * 0.55, 420);
-        const cropX = (fullWidth - cropW) / 2;
-        const cropY = (fullHeight - cropH) / 2;
-
-        if (canvas.width !== Math.round(cropW) || canvas.height !== Math.round(cropH)) {
-          canvas.width = Math.round(cropW);
-          canvas.height = Math.round(cropH);
-        }
-        ctx.drawImage(frameImage, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
-      }
-    }
-
-    frameImage.onload = renderFrame;
+    const fetchTime = document.getElementById('fetchTime');
+    const presetBtns = document.querySelectorAll('.preset-btn');
+    const stepBtns = document.querySelectorAll('.step-btn');
 
     function showToast(msg, duration = 2000) {
       toast.textContent = msg;
@@ -836,195 +883,150 @@ export class H5Server {
       setTimeout(() => toast.classList.remove('show'), duration);
     }
 
-    function toggleZoom(forceState) {
-      isZoomed = forceState !== undefined ? forceState : !isZoomed;
-      if (isZoomed) {
-        btnToggleZoom.classList.add('active');
-        zoomIcon.textContent = '↔️';
-        zoomText.textContent = '全景视图';
-        modeHint.textContent = '已放大居中验证区 (超大滑块)';
-        showToast('已放大居中验证区域，滑块更易拖动！');
-      } else {
-        btnToggleZoom.classList.remove('active');
-        zoomIcon.textContent = '🔍';
-        zoomText.textContent = '放大验证区';
-        modeHint.textContent = '全景模式 (可点击按钮)';
-        showToast('已切回全局全景模式');
-      }
-      renderFrame();
+    function setPercent(val) {
+      currentPercent = Math.max(0, Math.min(100, Math.round(Number(val) * 10) / 10));
+      valDisplay.textContent = currentPercent.toFixed(1) + '%';
+      btnVal.textContent = currentPercent.toFixed(1) + '%';
+      percentSlider.value = currentPercent;
+
+      presetBtns.forEach(b => {
+        if (Math.abs(Number(b.dataset.val) - currentPercent) < 0.3) {
+          b.classList.add('selected');
+        } else {
+          b.classList.remove('selected');
+        }
+      });
     }
 
-    btnToggleZoom.addEventListener('click', () => toggleZoom());
+    presetBtns.forEach(b => {
+      b.addEventListener('click', () => {
+        setPercent(Number(b.dataset.val));
+      });
+    });
 
-    btnQuickConnect.addEventListener('click', () => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'click_connect' }));
-        showToast('正在自动连接实例并唤起验证码...');
-        setTimeout(() => toggleZoom(true), 2000);
+    stepBtns.forEach(b => {
+      b.addEventListener('click', () => {
+        const step = Number(b.dataset.step);
+        setPercent(currentPercent + step);
+      });
+    });
+
+    percentSlider.addEventListener('input', (e) => {
+      setPercent(Number(e.target.value));
+    });
+
+    async function loadCaptchaState() {
+      try {
+        const res = await fetch('/api/captcha-state');
+        const data = await res.json();
+        if (data.imageBase64) {
+          captchaImg.src = 'data:image/png;base64,' + data.imageBase64;
+          captchaImg.style.display = 'block';
+          placeholderText.style.display = 'none';
+          fetchTime.textContent = new Date().toLocaleTimeString();
+        } else if (data.isRunning) {
+          placeholderText.textContent = '🎉 ModelScope 实例已处于运行状态！PC 守护进程正持续保活。';
+          placeholderText.style.display = 'block';
+          captchaImg.style.display = 'none';
+        } else {
+          placeholderText.textContent = '未检测到验证码弹窗。请点击上方【⚡ 唤起连接验证码】。';
+          placeholderText.style.display = 'block';
+          captchaImg.style.display = 'none';
+        }
+      } catch (err) {
+        placeholderText.textContent = '连接服务异常: ' + err.message;
+      }
+    }
+
+    btnRefresh.addEventListener('click', async () => {
+      showToast('正在刷新验证码...');
+      try {
+        const res = await fetch('/api/refresh-captcha', { method: 'POST' });
+        const data = await res.json();
+        if (data.imageBase64) {
+          captchaImg.src = 'data:image/png;base64,' + data.imageBase64;
+          captchaImg.style.display = 'block';
+          placeholderText.style.display = 'none';
+          showToast('验证码刷新成功！');
+        } else {
+          showToast(data.message || '刷新完成');
+        }
+      } catch (err) {
+        showToast('刷新异常: ' + err.message);
       }
     });
 
-    function connectWebSocket() {
-      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = protocol + '//' + location.host + '/stream';
+    btnWakeModal.addEventListener('click', async () => {
+      showToast('正在电脑端点击连接实例并获取验证码...');
+      try {
+        const res = await fetch('/api/wake-modal', { method: 'POST' });
+        const data = await res.json();
+        if (data.imageBase64) {
+          captchaImg.src = 'data:image/png;base64,' + data.imageBase64;
+          captchaImg.style.display = 'block';
+          placeholderText.style.display = 'none';
+          showToast('成功获取验证码！');
+        } else {
+          showToast(data.message || '操作已执行');
+          loadCaptchaState();
+        }
+      } catch (err) {
+        showToast('操作失败: ' + err.message);
+      }
+    });
 
-      ws = new WebSocket(wsUrl);
+    btnCheck.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/check-status');
+        const data = await res.json();
+        showToast(data.message, 3000);
+        if (data.running) {
+          resultBox.className = 'result-box success';
+          resultBox.textContent = '🎉 实例已在云端正常运行！PC 守护进程正全天候自动保活。';
+        }
+      } catch (err) {
+        showToast('检查失败: ' + err.message);
+      }
+    });
 
-      ws.onopen = () => {
-        statusBadge.classList.remove('offline');
-        statusText.textContent = '实时 30FPS';
-      };
+    btnSubmit.addEventListener('click', async () => {
+      btnSubmit.classList.add('loading');
+      btnSubmit.textContent = '正在电脑端模拟拖拽 (' + currentPercent.toFixed(1) + '%)...';
+      resultBox.style.display = 'none';
 
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'frame') {
-            frameImage.src = 'data:image/jpeg;base64,' + msg.data;
-          } else if (msg.type === 'toast') {
-            showToast(msg.message);
-          } else if (msg.type === 'status') {
-            showToast(msg.message, 3500);
+      try {
+        const res = await fetch('/api/submit-slide', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ percent: currentPercent })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          resultBox.className = 'result-box success';
+          resultBox.textContent = data.message || '🎉 验证通过！ModelScope 实例连接成功！';
+          showToast('🎉 验证通过！', 3000);
+          if (data.postDragBase64) {
+            captchaImg.src = 'data:image/png;base64,' + data.postDragBase64;
           }
-        } catch (e) {}
-      };
-
-      ws.onclose = () => {
-        statusBadge.classList.add('offline');
-        statusText.textContent = '已断开 (重连中)';
-        setTimeout(connectWebSocket, 2000);
-      };
-
-      ws.onerror = () => {
-        statusBadge.classList.add('offline');
-        statusText.textContent = '连接异常';
-      };
-    }
-
-    // Precise Coordinate mapping from canvas touch to actual Chrome page pixel coordinates
-    function getPageCoords(clientX, clientY) {
-      const rect = canvas.getBoundingClientRect();
-      const relX = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      const relY = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
-
-      if (!isZoomed) {
-        return {
-          x: Math.round(relX * fullWidth),
-          y: Math.round(relY * fullHeight),
-        };
-      } else {
-        const cropW = Math.min(fullWidth * 0.45, 520);
-        const cropH = Math.min(fullHeight * 0.55, 420);
-        const cropX = (fullWidth - cropW) / 2;
-        const cropY = (fullHeight - cropH) / 2;
-        return {
-          x: Math.round(cropX + relX * cropW),
-          y: Math.round(cropY + relY * cropH),
-        };
-      }
-    }
-
-    function sendInput(event, clientX, clientY, buttons = 1) {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      const coords = getPageCoords(clientX, clientY);
-      ws.send(JSON.stringify({
-        type: 'input',
-        event: event,
-        x: coords.x,
-        y: coords.y,
-        buttons: buttons,
-      }));
-    }
-
-    // Touch Event Handlers
-    canvas.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      const touch = e.touches[0];
-      isTouching = true;
-      touchStartTime = Date.now();
-      startX = touch.clientX;
-      startY = touch.clientY;
-
-      touchCursor.style.display = 'block';
-      touchCursor.style.left = touch.clientX + 'px';
-      touchCursor.style.top = touch.clientY + 'px';
-
-      sendInput('mousedown', touch.clientX, touch.clientY, 1);
-    }, { passive: false });
-
-    window.addEventListener('touchmove', (e) => {
-      if (!isTouching) return;
-      e.preventDefault();
-      const touch = e.touches[0];
-      touchCursor.style.left = touch.clientX + 'px';
-      touchCursor.style.top = touch.clientY + 'px';
-      sendInput('mousemove', touch.clientX, touch.clientY, 1);
-    }, { passive: false });
-
-    window.addEventListener('touchend', (e) => {
-      if (!isTouching) return;
-      e.preventDefault();
-      isTouching = false;
-      touchCursor.style.display = 'none';
-      const touch = e.changedTouches[0];
-      const duration = Date.now() - touchStartTime;
-      const dist = Math.hypot(touch.clientX - startX, touch.clientY - startY);
-
-      if (duration < 250 && dist < 8) {
-        // Quick tap: send explicit single click
-        sendInput('click', touch.clientX, touch.clientY, 1);
-      } else {
-        sendInput('mouseup', touch.clientX, touch.clientY, 0);
-      }
-    }, { passive: false });
-
-    window.addEventListener('touchcancel', () => {
-      if (isTouching) {
-        isTouching = false;
-        touchCursor.style.display = 'none';
-        sendInput('mouseup', 0, 0, 0);
+        } else {
+          resultBox.className = 'result-box error';
+          resultBox.textContent = '⚠️ ' + (data.message || '验证未通过，请参考落点微调后重试。');
+          showToast('验证未通过，请微调后重试');
+          if (data.postDragBase64 || data.newImageBase64) {
+            captchaImg.src = 'data:image/png;base64,' + (data.postDragBase64 || data.newImageBase64);
+          }
+        }
+      } catch (err) {
+        resultBox.className = 'result-box error';
+        resultBox.textContent = '滑动请求异常: ' + err.message;
+      } finally {
+        btnSubmit.classList.remove('loading');
+        btnSubmit.innerHTML = '<span>🚀</span> 立即在电脑端执行滑动 (<span id="btnVal">' + currentPercent.toFixed(1) + '%</span>)';
       }
     });
 
-    // Mouse Event Handlers for Desktop Testing
-    canvas.addEventListener('mousedown', (e) => {
-      isTouching = true;
-      touchStartTime = Date.now();
-      startX = e.clientX;
-      startY = e.clientY;
-      sendInput('mousedown', e.clientX, e.clientY, 1);
-    });
-
-    window.addEventListener('mousemove', (e) => {
-      if (!isTouching) return;
-      sendInput('mousemove', e.clientX, e.clientY, 1);
-    });
-
-    window.addEventListener('mouseup', (e) => {
-      if (!isTouching) return;
-      isTouching = false;
-      const duration = Date.now() - touchStartTime;
-      const dist = Math.hypot(e.clientX - startX, e.clientY - startY);
-      if (duration < 250 && dist < 8) {
-        sendInput('click', e.clientX, e.clientY, 1);
-      } else {
-        sendInput('mouseup', e.clientX, e.clientY, 0);
-      }
-    });
-
-    btnRefresh.addEventListener('click', () => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'refresh' }));
-        showToast('正在请求刷新验证码...');
-      }
-    });
-
-    btnCheck.addEventListener('click', () => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'check' }));
-      }
-    });
-
-    connectWebSocket();
+    loadCaptchaState();
   </script>
 </body>
 </html>`;

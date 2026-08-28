@@ -322,11 +322,50 @@ export class CardTemplates {
     };
   }
   /**
-   * Build Launch Prompt Card (Option A: Native mobile launch + PC auto-takeover).
+   * Build Launch Prompt Card (Option 1: Mobile Native + Option 2: Big-Button H5 Tuner).
    * @param {string} notebookName
    * @param {string} workspaceUrl
+   * @param {string} h5Url
    */
-  static buildLaunchPromptCard(notebookName = 'ModelScope工作空间', workspaceUrl = 'https://www.modelscope.cn/code/workspace') {
+  static buildLaunchPromptCard(notebookName = 'ModelScope工作空间', workspaceUrl = 'https://www.modelscope.cn/code/workspace', h5Url = '') {
+    const actions = [
+      {
+        tag: 'button',
+        text: { tag: 'plain_text', content: '🌐 方案1: 手机打开官网(电脑模式)' },
+        type: 'primary',
+        url: workspaceUrl,
+      },
+    ];
+
+    if (h5Url) {
+      actions.push({
+        tag: 'button',
+        text: { tag: 'plain_text', content: '📱 方案2: 手机大按钮按键微调' },
+        type: 'default',
+        multi_url: {
+          url: h5Url,
+          pc_url: h5Url,
+          android_url: h5Url,
+          ios_url: h5Url,
+        },
+      });
+    }
+
+    actions.push(
+      {
+        tag: 'button',
+        text: { tag: 'plain_text', content: '🔄 启动后立即检测接管' },
+        type: 'default',
+        value: { action: 'manual_refresh' },
+      },
+      {
+        tag: 'button',
+        text: { tag: 'plain_text', content: '📊 查看状态看板' },
+        type: 'default',
+        value: { action: 'view_status' },
+      }
+    );
+
     return {
       config: { wide_screen_mode: true },
       header: {
@@ -338,32 +377,13 @@ export class CardTemplates {
           tag: 'div',
           text: {
             tag: 'lark_md',
-            content: `**工作空间**: **${notebookName}**\n**当前状态**: 🟡 尚未连接运行\n\n📱 **启动步骤（手机原生体验）**：\n1. 点击下方【**🚀 手机直达打开工作空间**】在手机浏览器中打开；\n2. 点击【连接运行时】并使用原生手势滑动通过验证；\n3. 启动成功后，PC 守护进程将**自动无缝接管 24/7 全自动保活**！`,
+            content: `**工作空间**: **${notebookName}**\n**当前状态**: 🟡 尚未连接运行\n\n💡 **两种启动与验证方式任选**：\n• **方案 1（手机原生）**：点击【**方案1: 手机打开官网**】，在手机浏览器开启【电脑模式】后原生顺滑滑动；\n• **方案 2（按键微调）**：点击【**方案2: 手机大按钮按键微调**】，在手机上看标尺轻点按键完成滑动。\n\n启动成功后，PC 守护进程将**自动无缝接管 24/7 全自动保活**！`,
           },
         },
         { tag: 'hr' },
         {
           tag: 'action',
-          actions: [
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '🚀 手机直达打开工作空间' },
-              type: 'primary',
-              url: workspaceUrl,
-            },
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '🔄 启动后点此立即检测接管' },
-              type: 'default',
-              value: { action: 'manual_refresh' },
-            },
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '📊 查看状态看板' },
-              type: 'default',
-              value: { action: 'view_status' },
-            },
-          ],
+          actions,
         },
       ],
     };
