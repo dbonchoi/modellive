@@ -55,9 +55,9 @@
     "enabled": true,
     "apiKey": "AIzaSy_YOUR_GEMINI_API_KEY",
     "model": "gemini-3.7-flash",
-    "effort": "high",
+    "effort": "low",
     "proxy": "http://192.168.0.110:31028",
-    "timeoutMs": 180000
+    "timeoutMs": 35000
   },
   "pidFile": "keepalive.pid",
   "logFile": "keepalive.log"
