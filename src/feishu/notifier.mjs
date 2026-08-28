@@ -116,6 +116,9 @@ export class FeishuNotifier {
   /**
    * Send QR code login card with uploaded image buffer.
    */
+  /**
+   * Send QR code login card with uploaded image buffer.
+   */
   async sendLoginQRCode(imageBuffer, receiveId = null, provider = 'csdn') {
     const imageKey = await this.uploadImage(imageBuffer);
     if (!imageKey) {
@@ -123,6 +126,19 @@ export class FeishuNotifier {
     }
 
     const card = CardTemplates.buildLoginQrCard(imageKey, provider);
+    return await this.sendCard(card, receiveId);
+  }
+
+  /**
+   * Send Captcha Slider card with uploaded image buffer.
+   */
+  async sendCaptchaCard(imageBuffer, receiveId = null, tip = '') {
+    const imageKey = await this.uploadImage(imageBuffer);
+    if (!imageKey) {
+      return await this.sendAlert('安全验证提示', '检测到实例连接触发了滑块验证，请在本地电脑屏幕中完成滑动。');
+    }
+
+    const card = CardTemplates.buildCaptchaCard(imageKey, tip);
     return await this.sendCard(card, receiveId);
   }
 }

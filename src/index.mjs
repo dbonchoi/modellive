@@ -168,12 +168,19 @@ Options:
   scheduler.on('loginExpired', async ({ notebook, reason, page }) => {
     if (notifier.enabled) {
       logger.warn(`Triggering Feishu login QR code notification for ${notebook.name}...`);
-      const qrResult = await AuthDetector.captureLoginQRCode(page);
+      const qrResult = await AuthDetector.captureLoginQRCode(page, config.loginProvider || 'csdn');
       if (qrResult.buffer) {
-        await notifier.sendLoginQRCode(qrResult.buffer);
+        await notifier.sendLoginQRCode(qrResult.buffer, null, qrResult.providerUsed);
       } else {
         await notifier.sendAlert('ModelScope 登录态已失效', `实例 [${notebook.name}] 访问失败：${reason || '未登录'}，请前往电脑端完成登录。`);
       }
+    }
+  });
+
+  scheduler.on('captchaRequired', async ({ notebook, buffer }) => {
+    if (notifier.enabled) {
+      logger.warn(`[${notebook.name}] Pushing captcha verification card to Feishu...`);
+      await notifier.sendCaptchaCard(buffer, null, `实例【${notebook.name}】在连接时触发了图片滑块验证`);
     }
   });
 

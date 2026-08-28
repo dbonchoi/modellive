@@ -108,7 +108,11 @@ export class Scheduler {
         // Execute keepalive action
         const actionResult = await PageActions.execute(page, nb, scheduleConfig);
 
-        if (actionResult.success) {
+        if (actionResult.captchaBuffer) {
+          stateStore.recordFailure(nb.id, 'Captcha verification required', actionResult.durationMs);
+          this.emit('captchaRequired', { notebook: nb, buffer: actionResult.captchaBuffer, page });
+          results.push({ id: nb.id, ok: false, error: 'Captcha verification required' });
+        } else if (actionResult.success) {
           stateStore.recordSuccess(nb.id, actionResult);
           results.push({ id: nb.id, ok: true, ...actionResult });
         } else {

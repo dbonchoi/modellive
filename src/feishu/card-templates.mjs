@@ -200,6 +200,87 @@ export class CardTemplates {
   }
 
   /**
+   * Build Captcha Slider Verification Card
+   */
+  static buildCaptchaCard(imageKey, tip = '请根据图片选择滑块拖动比例') {
+    return {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { tag: 'plain_text', content: '🧩 ModelScope 连接安全验证' },
+        template: 'orange',
+      },
+      elements: [
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: `**检测到安全滑块/旋转还原验证**\n${tip}\n可以直接点击下方快捷比例按钮，或在聊天框输入 \`/slide <数值>\`（如 \`/slide 45\`）进行精准拖动。`,
+          },
+        },
+        {
+          tag: 'img',
+          img_key: imageKey,
+          alt: { tag: 'plain_text', content: 'Captcha Verification' },
+          mode: 'fit_horizontal',
+        },
+        { tag: 'hr' },
+        {
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '20%' },
+              type: 'default',
+              value: { action: 'slider_drag', percent: 20 },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '35%' },
+              type: 'default',
+              value: { action: 'slider_drag', percent: 35 },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '50%' },
+              type: 'primary',
+              value: { action: 'slider_drag', percent: 50 },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '65%' },
+              type: 'default',
+              value: { action: 'slider_drag', percent: 65 },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '80%' },
+              type: 'default',
+              value: { action: 'slider_drag', percent: 80 },
+            },
+          ],
+        },
+        {
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '🔄 刷新换一张' },
+              type: 'default',
+              value: { action: 'captcha_refresh' },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '✅ 我已在电脑端完成' },
+              type: 'primary',
+              value: { action: 'confirm_captcha' },
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  /**
    * Build Help Card
    */
   static buildHelpCard() {

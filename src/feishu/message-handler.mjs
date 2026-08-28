@@ -75,7 +75,6 @@ export class MessageHandler {
         );
 
         try {
-          // Temporarily set or ensure instanceType on first notebook
           if (this.scheduler.config.notebooks.length > 0) {
             this.scheduler.config.notebooks[0].instanceType = instanceType;
           }
@@ -88,6 +87,15 @@ export class MessageHandler {
             targetId
           );
         }
+        break;
+      }
+
+      case '/slide':
+      case 'slide':
+      case '滑动':
+      case '拖动': {
+        const percent = Number(args[0]) || 50;
+        await this.handleSlideAction(targetId, percent);
         break;
       }
 
@@ -191,6 +199,43 @@ export class MessageHandler {
         break;
       }
 
+      case 'slider_drag': {
+        const percent = Number(actionData.percent) || 50;
+        await this.handleSlideAction(senderId, percent);
+        break;
+      }
+
+      case 'captcha_refresh': {
+        try {
+          const page = await this.browserManager.getPrimaryPage();
+          const cap = await PageActions.refreshCaptcha(page);
+          if (cap.buffer) {
+            await this.notifier.sendCaptchaCard(cap.buffer, senderId, '已刷新验证码图片，请重新选择滑动比例');
+          } else {
+            await this.notifier.sendCard(CardTemplates.buildResultCard('验证码已消失', '未检测到验证码弹窗，可能已自动通过。', true), senderId);
+          }
+        } catch (err) {
+          await this.notifier.sendCard(CardTemplates.buildResultCard('刷新验证码失败', err.message, false), senderId);
+        }
+        break;
+      }
+
+      case 'confirm_captcha': {
+        try {
+          const page = await this.browserManager.getPrimaryPage();
+          const cap = await PageActions.checkAndCaptureCaptcha(page);
+          if (!cap.visible) {
+            await this.notifier.sendCard(CardTemplates.buildResultCard('验证通过', '🎉 验证已完成！正在恢复实例连接...', true), senderId);
+            await this.scheduler.runRound();
+          } else {
+            await this.notifier.sendCaptchaCard(cap.buffer, senderId, '未检测到验证通过，请继续完成滑动');
+          }
+        } catch (err) {
+          await this.notifier.sendCard(CardTemplates.buildResultCard('检测失败', err.message, false), senderId);
+        }
+        break;
+      }
+
       case 'confirm_login': {
         try {
           const page = await this.browserManager.getPrimaryPage();
@@ -238,6 +283,37 @@ export class MessageHandler {
       default:
         logger.warn(`Unknown card action: ${action}`);
         break;
+    }
+  }
+
+  /**
+   * Handle remote slider drag action.
+   * @param {string} targetId
+   * @param {number} percent
+   */
+  async handleSlideAction(targetId, percent) {
+    try {
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard('正在执行滑动', `正在向右模拟拖动滑块至 ${percent}%...`, true),
+        targetId
+      );
+
+      const page = await this.browserManager.getPrimaryPage();
+      const res = await PageActions.executeSlideDrag(page, percent);
+
+      if (res.success) {
+        await this.notifier.sendCard(CardTemplates.buildResultCard('验证成功', res.message, true), targetId);
+        // Wait and run round to verify connection
+        await this.scheduler.runRound();
+      } else {
+        if (res.newCaptchaBuffer) {
+          await this.notifier.sendCaptchaCard(res.newCaptchaBuffer, targetId, `${res.message} (上次尝试: ${percent}%)`);
+        } else {
+          await this.notifier.sendCard(CardTemplates.buildResultCard('滑动未完成', res.message, false), targetId);
+        }
+      }
+    } catch (err) {
+      await this.notifier.sendCard(CardTemplates.buildResultCard('滑动异常', err.message, false), targetId);
     }
   }
 

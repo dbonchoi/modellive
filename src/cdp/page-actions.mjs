@@ -17,7 +17,7 @@ export class PageActions {
    * @param {import('playwright-core').Page} page
    * @param {object} notebookConfig
    * @param {object} scheduleConfig
-   * @returns {Promise<{ success: boolean, action: string, status: string, durationMs: number, restarted?: boolean, error?: string }>}
+   * @returns {Promise<{ success: boolean, action: string, status: string, durationMs: number, restarted?: boolean, captchaBuffer?: Buffer, error?: string }>}
    */
   static async execute(page, notebookConfig, scheduleConfig = {}) {
     const startedAt = Date.now();
@@ -40,6 +40,7 @@ export class PageActions {
 
       let restarted = false;
       let statusDesc = 'OK';
+      let captchaBuffer = null;
 
       if (action === 'refresh') {
         logger.cdp(`[${notebookConfig.name}] Reloading page...`);
@@ -55,23 +56,25 @@ export class PageActions {
         const checkResult = await this.smartCheckAndAct(page, notebookConfig);
         restarted = checkResult.restarted;
         statusDesc = checkResult.statusDesc;
+        captchaBuffer = checkResult.captchaBuffer || null;
       }
 
       // Hold time
-      if (holdMs > 0) {
+      if (holdMs > 0 && !captchaBuffer) {
         logger.cdp(`[${notebookConfig.name}] Holding page for ${(holdMs / 1000).toFixed(1)}s`);
         await this.sleep(holdMs);
       }
 
       const durationMs = Date.now() - startedAt;
-      logger.success(`[${notebookConfig.name}] Keepalive completed successfully (${(durationMs / 1000).toFixed(1)}s) - ${statusDesc}`);
+      logger.success(`[${notebookConfig.name}] Keepalive completed (${(durationMs / 1000).toFixed(1)}s) - ${statusDesc}`);
 
       return {
-        success: true,
+        success: !captchaBuffer,
         action,
         status: statusDesc,
         durationMs,
         restarted,
+        captchaBuffer,
       };
     } catch (err) {
       const durationMs = Date.now() - startedAt;
@@ -112,9 +115,14 @@ export class PageActions {
           await this.sleep(1500);
 
           // Handle the "选择实例" (Select Instance) popup modal
-          const modalHandled = await this.handleSelectInstanceModal(page, notebookConfig);
+          const modalRes = await this.handleSelectInstanceModal(page, notebookConfig);
           restarted = true;
-          statusDesc = modalHandled ? 'Runtime instance connected' : 'Clicked connect runtime';
+
+          if (modalRes.captchaBuffer) {
+            return { restarted: true, statusDesc: 'Captcha Verification Required', captchaBuffer: modalRes.captchaBuffer };
+          }
+
+          statusDesc = modalRes.success ? 'Runtime instance connected' : 'Clicked connect runtime';
           return { restarted, statusDesc };
         }
       } catch (err) {
@@ -122,7 +130,14 @@ export class PageActions {
       }
     }
 
-    // 2. Look for reconnect / wake / resume buttons
+    // 2. Check if captcha modal is already on screen
+    const existingCaptcha = await this.checkAndCaptureCaptcha(page);
+    if (existingCaptcha.buffer) {
+      logger.warn(`[${notebookConfig.name}] Security verification / captcha modal is currently open.`);
+      return { restarted: false, statusDesc: 'Captcha Verification Required', captchaBuffer: existingCaptcha.buffer };
+    }
+
+    // 3. Look for reconnect / wake / resume buttons
     const resumeBtnSelectors = [
       'button:has-text("重新连接")',
       'button:has-text("恢复运行")',
@@ -147,7 +162,7 @@ export class PageActions {
       }
     }
 
-    // 3. If on workspace list page, check if specific instance is stopped
+    // 4. If on workspace list page, check if specific instance is stopped
     if (notebookConfig.autoStart) {
       const startBtnSelectors = [
         'button:has-text("启动")',
@@ -172,7 +187,7 @@ export class PageActions {
       }
     }
 
-    // 4. If running normally inside Code Editor / JupyterLab / DSW workspace, simulate mouse/keyboard activity
+    // 5. If running normally inside Code Editor / JupyterLab / DSW workspace, simulate mouse/keyboard activity
     await this.simulateUserActivity(page);
     statusDesc = 'Active & Heartbeat simulated';
 
@@ -183,24 +198,25 @@ export class PageActions {
    * Handle "选择实例" modal dialog in Code Editor
    * @param {import('playwright-core').Page} page
    * @param {object} notebookConfig
+   * @returns {Promise<{ success: boolean, captchaBuffer?: Buffer }>}
    */
   static async handleSelectInstanceModal(page, notebookConfig) {
     try {
       const modalHeader = await page.$('div:has-text("选择实例"), h3:has-text("选择实例"), h4:has-text("选择实例")');
       if (!modalHeader) {
-        // Check if modal container is present
         const connectBtn = await page.$('button:has-text("连接")');
         if (connectBtn && (await connectBtn.isVisible())) {
           logger.info(`[${notebookConfig.name}] Found modal '连接' button, clicking...`);
           await connectBtn.click({ timeout: 5000 });
-          await this.sleep(3000);
-          return true;
+          await this.sleep(2000);
+          const cap = await this.checkAndCaptureCaptcha(page);
+          return { success: !cap.buffer, captchaBuffer: cap.buffer };
         }
-        return false;
+        return { success: false };
       }
 
       // Check instance type preference (e.g., 'GPU', 'AMD GPU', 'CPU')
-      const targetType = (notebookConfig.instanceType || '').toUpperCase();
+      const targetType = (notebookConfig.instanceType || 'CPU').toUpperCase();
       if (targetType.includes('GPU') && !targetType.includes('AMD')) {
         const gpuTab = await page.$('div:has-text("GPU 类型"), button:has-text("GPU 类型"), span:has-text("GPU 类型")');
         if (gpuTab && (await gpuTab.isVisible())) {
@@ -236,15 +252,212 @@ export class PageActions {
         if (confirmBtn && (await confirmBtn.isVisible())) {
           logger.info(`[${notebookConfig.name}] Clicking modal confirmation button '连接'...`);
           await confirmBtn.click({ timeout: 5000 });
-          await this.sleep(4000);
-          return true;
+          await this.sleep(2000);
+
+          // Check if captcha appeared
+          const cap = await this.checkAndCaptureCaptcha(page);
+          if (cap.buffer) {
+            logger.warn(`[${notebookConfig.name}] Security captcha popup appeared after clicking connect!`);
+            return { success: false, captchaBuffer: cap.buffer };
+          }
+
+          return { success: true };
         }
       }
 
-      return false;
+      return { success: false };
     } catch (err) {
       logger.warn(`Error handling select instance modal: ${err.message}`);
-      return false;
+      return { success: false };
+    }
+  }
+
+  /**
+   * Check if security verification / slider captcha is visible and capture its screenshot.
+   * @param {import('playwright-core').Page} page
+   * @returns {Promise<{ visible: boolean, buffer: Buffer | null }>}
+   */
+  static async checkAndCaptureCaptcha(page) {
+    try {
+      const captchaSelectors = [
+        'div:has-text("请完成安全验证")',
+        'div:has-text("拖动滑块")',
+        '.nc-container',
+        'div[class*="captcha"]',
+        'div[class*="verify-modal"]',
+        'div[role="dialog"]:has-text("安全验证")',
+      ];
+
+      let captchaModal = null;
+      for (const sel of captchaSelectors) {
+        try {
+          const el = await page.$(sel);
+          if (el && (await el.isVisible())) {
+            captchaModal = el;
+            break;
+          }
+        } catch {
+          // continue
+        }
+      }
+
+      if (!captchaModal) {
+        return { visible: false, buffer: null };
+      }
+
+      logger.info('Capturing security verification captcha modal screenshot...');
+      const buffer = await captchaModal.screenshot({ type: 'png' }).catch(async () => {
+        return await page.screenshot({ fullPage: false, type: 'png' });
+      });
+
+      return { visible: true, buffer };
+    } catch (err) {
+      logger.warn(`Error checking captcha modal: ${err.message}`);
+      return { visible: false, buffer: null };
+    }
+  }
+
+  /**
+   * Execute human-like slider drag on the captcha modal.
+   * @param {import('playwright-core').Page} page
+   * @param {number} targetPercent (0 - 100)
+   * @returns {Promise<{ success: boolean, message: string, newCaptchaBuffer?: Buffer }>}
+   */
+  static async executeSlideDrag(page, targetPercent = 50) {
+    try {
+      logger.info(`Simulating human slider drag to ${targetPercent}%...`);
+
+      // Find drag button / slider handle
+      const btnSelectors = [
+        'div:has-text(">>")',
+        'span:has-text(">>")',
+        '[class*="btn_slide"]',
+        '[class*="slider-button"]',
+        '[class*="drag-btn"]',
+        '[class*="nc_iconfont"]',
+        '.nc_scale span',
+        'div[class*="handler"]',
+      ];
+
+      let sliderBtn = null;
+      for (const sel of btnSelectors) {
+        try {
+          const el = await page.$(sel);
+          if (el && (await el.isVisible())) {
+            sliderBtn = el;
+            break;
+          }
+        } catch {
+          // continue
+        }
+      }
+
+      if (!sliderBtn) {
+        return { success: false, message: '未能找到滑块拖动按钮 (>>)' };
+      }
+
+      const btnBox = await sliderBtn.boundingBox();
+      if (!btnBox) {
+        return { success: false, message: '无法获取滑块坐标' };
+      }
+
+      // Find track to calculate total drag distance
+      const trackSelectors = [
+        '[class*="slide_track"]',
+        '[class*="scale_text"]',
+        '[class*="slider-track"]',
+        'div:has-text("拖动滑块")',
+        '.nc_scale',
+      ];
+
+      let trackWidth = 260; // standard default
+      for (const sel of trackSelectors) {
+        try {
+          const t = await page.$(sel);
+          if (t && (await t.isVisible())) {
+            const tBox = await t.boundingBox();
+            if (tBox && tBox.width > btnBox.width) {
+              trackWidth = tBox.width - btnBox.width;
+              break;
+            }
+          }
+        } catch {
+          // continue
+        }
+      }
+
+      const dragDistance = Math.round(trackWidth * (Math.max(0, Math.min(100, targetPercent)) / 100));
+      const startX = btnBox.x + btnBox.width / 2;
+      const startY = btnBox.y + btnBox.height / 2;
+      const targetX = startX + dragDistance;
+
+      logger.info(`Slider drag start: (${startX}, ${startY}) -> target: (${targetX}, ${startY}), distance: ${dragDistance}px`);
+
+      // Human-like smooth drag simulation
+      await page.mouse.move(startX, startY);
+      await this.sleep(100);
+      await page.mouse.down();
+      await this.sleep(80);
+
+      const steps = 30;
+      for (let i = 1; i <= steps; i++) {
+        const progress = i / steps;
+        // Ease-out cubic curve + random small Y jitter
+        const ease = 1 - Math.pow(1 - progress, 3);
+        const curX = startX + dragDistance * ease;
+        const jitterY = startY + (Math.random() * 4 - 2);
+        await page.mouse.move(curX, jitterY);
+        await this.sleep(15 + Math.floor(Math.random() * 10));
+      }
+
+      await this.sleep(120);
+      await page.mouse.up();
+      logger.success(`Slider drag completed. Waiting for verification result...`);
+      await this.sleep(2500);
+
+      // Check if captcha is still visible or disappeared
+      const recheck = await this.checkAndCaptureCaptcha(page);
+      if (!recheck.visible) {
+        logger.success('Captcha verification passed successfully!');
+        return { success: true, message: '🎉 滑块验证通过！实例正在继续连接运行...' };
+      } else {
+        logger.warn('Captcha still visible after drag; verification may have failed or needs another position.');
+        return {
+          success: false,
+          message: '滑块验证未通过或角度不符，请参考新图片调整百分比重试。',
+          newCaptchaBuffer: recheck.buffer,
+        };
+      }
+    } catch (err) {
+      logger.error(`Error during slider drag: ${err.message}`);
+      return { success: false, message: `滑动执行异常: ${err.message}` };
+    }
+  }
+
+  /**
+   * Refresh captcha image on the verification modal
+   * @param {import('playwright-core').Page} page
+   */
+  static async refreshCaptcha(page) {
+    try {
+      const refreshSelectors = [
+        'div[class*="refresh"]',
+        'span[class*="refresh"]',
+        'svg[class*="refresh"]',
+        'a[class*="refresh"]',
+        '.nc_iconfont_refresh',
+      ];
+      for (const sel of refreshSelectors) {
+        const el = await page.$(sel);
+        if (el && (await el.isVisible())) {
+          await el.click();
+          await this.sleep(1500);
+          return await this.checkAndCaptureCaptcha(page);
+        }
+      }
+      return await this.checkAndCaptureCaptcha(page);
+    } catch {
+      return { visible: false, buffer: null };
     }
   }
 
@@ -265,7 +478,6 @@ export class PageActions {
       await page.evaluate(() => {
         window.dispatchEvent(new Event('mousemove'));
         window.dispatchEvent(new Event('keydown'));
-        // Touch document title or active timestamp
         window._modellive_last_heartbeat = Date.now();
       }).catch(() => {});
     } catch (err) {
