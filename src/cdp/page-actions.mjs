@@ -108,7 +108,7 @@ export class PageActions {
         logger.info(`[${notebookConfig.name}] Captcha is open, attempting AI auto-solve...`);
         try {
           const { CaptchaSolver } = await import('./captcha-solver.mjs');
-          const autoRes = await CaptchaSolver.autoSolve(page);
+          const autoRes = await CaptchaSolver.autoSolve(page, existingCaptcha.buffer);
           if (autoRes.solved) {
             return { restarted: true, statusDesc: 'Runtime instance connected' };
           }
@@ -337,7 +337,7 @@ export class PageActions {
           logger.warn(`[${notebookConfig.name}] Security captcha popup appeared after clicking connect! Running AI auto-solve...`);
           try {
             const { CaptchaSolver } = await import('./captcha-solver.mjs');
-            const autoRes = await CaptchaSolver.autoSolve(page);
+            const autoRes = await CaptchaSolver.autoSolve(page, cap.buffer);
             if (autoRes.solved) {
               logger.success(`[${notebookConfig.name}] Captcha was successfully solved automatically!`);
               return { success: true };

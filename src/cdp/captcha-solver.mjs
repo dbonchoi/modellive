@@ -17,21 +17,33 @@ export class CaptchaSolver {
   /**
    * Attempt to automatically analyze and solve the currently displayed captcha.
    * @param {import('playwright-core').Page} page
-   * @returns {Promise<{ solved: boolean, percent: number, confidence: number, type: string, error?: string }>}
+   * @param {Buffer} [rawCaptchaBuffer=null]
+   * @returns {Promise<{ solved: boolean, percent: number, confidence: number, type: string, error?: string, newCaptchaBuffer?: Buffer }>}
    */
-  static async autoSolve(page) {
+  static async autoSolve(page, rawCaptchaBuffer = null) {
     try {
       logger.info('[CaptchaSolver] Starting automatic Computer Vision analysis on captcha...');
 
-      // 1. Analyze rotation angle / gap position via Canvas
-      const analysis = await this.analyzeCaptchaImage(page);
+      let bufferToAnalyze = rawCaptchaBuffer;
+      if (!bufferToAnalyze) {
+        const cap = await PageActions.checkAndCaptureCaptcha(page);
+        bufferToAnalyze = cap.buffer;
+      }
+
+      if (!bufferToAnalyze) {
+        logger.warn('[CaptchaSolver] No captcha screenshot available to analyze.');
+        return { solved: false, percent: 50, confidence: 0, type: 'unknown' };
+      }
+
+      // 1. Analyze rotation angle / gap position via in-browser Canvas
+      const analysis = await this.analyzeCaptchaBuffer(page, bufferToAnalyze);
 
       if (!analysis || analysis.percent === undefined) {
         logger.warn('[CaptchaSolver] Could not automatically determine captcha solution.');
         return { solved: false, percent: 50, confidence: 0, type: 'unknown' };
       }
 
-      logger.info(`[CaptchaSolver] CV Analysis complete: type="${analysis.type}", estimatedPercent=${analysis.percent}%, confidence=${analysis.confidence.toFixed(2)}`);
+      logger.info(`[CaptchaSolver] CV Analysis complete: type="${analysis.type}", estimatedPercent=${analysis.percent}%, angle=${analysis.angle}°`);
 
       // 2. Perform human-like slider drag with the calculated percentage
       const dragRes = await PageActions.executeSlideDrag(page, analysis.percent);
@@ -56,190 +68,164 @@ export class CaptchaSolver {
   }
 
   /**
-   * In-browser Canvas Computer Vision analyzer.
+   * In-browser Canvas Computer Vision analyzer on screenshot buffer.
    * Evaluates image rotation energy and edge distribution across 360 degrees.
    * @param {import('playwright-core').Page} page
+   * @param {Buffer} buffer
    */
-  static async analyzeCaptchaImage(page) {
+  static async analyzeCaptchaBuffer(page, buffer) {
     try {
-      return await page.evaluate(async () => {
-        // 1. Locate the captcha image element
-        const imgSelectors = [
-          'div:has-text("请完成安全验证") img',
-          '.antd5-modal-content img',
-          '.nc-container img',
-          'div[role="dialog"] img',
-          'canvas.nc_canvas',
-          'img[src*="captcha"]',
-          'img[src*="baxia"]',
-        ];
+      const base64 = buffer.toString('base64');
+      return await page.evaluate(async (b64) => {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            const totalW = img.width;
+            const totalH = img.height;
 
-        let imgEl = null;
-        for (const sel of imgSelectors) {
-          const el = document.querySelector(sel);
-          if (el && el.naturalWidth > 50) {
-            imgEl = el;
-            break;
-          }
-        }
+            // Crop to the central puzzle/rotation image area (above the slider track and below the header)
+            const cropTop = Math.floor(totalH * 0.12);
+            const cropBottom = Math.floor(totalH * 0.76);
+            const imgAreaH = cropBottom - cropTop;
+            const imgAreaW = totalW;
 
-        if (!imgEl) {
-          // Check for any visible image inside dialog with reasonable size
-          const allImgs = Array.from(document.querySelectorAll('img, canvas'));
-          for (const img of allImgs) {
-            const rect = img.getBoundingClientRect();
-            if (rect.width >= 120 && rect.height >= 120 && rect.top > 0) {
-              imgEl = img;
-              break;
-            }
-          }
-        }
+            const srcCanvas = document.createElement('canvas');
+            srcCanvas.width = imgAreaW;
+            srcCanvas.height = imgAreaH;
+            const srcCtx = srcCanvas.getContext('2d', { willReadFrequently: true });
+            srcCtx.drawImage(img, 0, cropTop, imgAreaW, imgAreaH, 0, 0, imgAreaW, imgAreaH);
 
-        if (!imgEl) {
-          return { type: 'unknown', percent: 50, confidence: 0 };
-        }
+            const cx = imgAreaW / 2;
+            const cy = imgAreaH / 2;
+            const radius = Math.min(cx, cy) * 0.82;
 
-        // 2. Draw image to offscreen canvas
-        const srcCanvas = document.createElement('canvas');
-        const w = imgEl.naturalWidth || imgEl.width || 280;
-        const h = imgEl.naturalHeight || imgEl.height || 280;
-        srcCanvas.width = w;
-        srcCanvas.height = h;
-        const srcCtx = srcCanvas.getContext('2d', { willReadFrequently: true });
-        srcCtx.drawImage(imgEl, 0, 0, w, h);
+            const testCanvas = document.createElement('canvas');
+            testCanvas.width = imgAreaW;
+            testCanvas.height = imgAreaH;
+            const testCtx = testCanvas.getContext('2d', { willReadFrequently: true });
 
-        const cx = w / 2;
-        const cy = h / 2;
-        const radius = Math.min(cx, cy) * 0.85;
+            let bestAngle = 0;
+            let maxScore = -Infinity;
 
-        // 3. Multi-angle Rectilinear Gradient & Gravity Symmetry Analysis
-        const testCanvas = document.createElement('canvas');
-        testCanvas.width = w;
-        testCanvas.height = h;
-        const testCtx = testCanvas.getContext('2d', { willReadFrequently: true });
+            // Step 1: Coarse search every 5 degrees (0 to 355)
+            for (let angle = 0; angle < 360; angle += 5) {
+              testCtx.clearRect(0, 0, imgAreaW, imgAreaH);
+              testCtx.save();
+              testCtx.translate(cx, cy);
+              testCtx.rotate((angle * Math.PI) / 180);
+              testCtx.drawImage(srcCanvas, -cx, -cy);
+              testCtx.restore();
 
-        let bestAngle = 0;
-        let maxScore = -Infinity;
+              const imgData = testCtx.getImageData(0, 0, imgAreaW, imgAreaH);
+              const data = imgData.data;
 
-        // Coarse search: step 5 degrees
-        for (let angle = 0; angle < 360; angle += 5) {
-          testCtx.clearRect(0, 0, w, h);
-          testCtx.save();
-          testCtx.translate(cx, cy);
-          testCtx.rotate((angle * Math.PI) / 180);
-          testCtx.drawImage(srcCanvas, -cx, -cy);
-          testCtx.restore();
+              let edgeScore = 0;
+              let gravityScore = 0;
+              let samples = 0;
 
-          const imgData = testCtx.getImageData(0, 0, w, h);
-          const data = imgData.data;
+              for (let y = Math.floor(cy - radius); y < cy + radius; y += 4) {
+                for (let x = Math.floor(cx - radius); x < cx + radius; x += 4) {
+                  const dxCenter = x - cx;
+                  const dyCenter = y - cy;
+                  if (dxCenter * dxCenter + dyCenter * dyCenter > radius * radius) continue;
 
-          let edgeScore = 0;
-          let gravityScore = 0;
-          let samples = 0;
+                  const idx = (y * imgAreaW + x) * 4;
+                  const gray = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
 
-          // Sample central circle
-          for (let y = Math.floor(cy - radius); y < cy + radius; y += 4) {
-            for (let x = Math.floor(cx - radius); x < cx + radius; x += 4) {
-              const dxCenter = x - cx;
-              const dyCenter = y - cy;
-              if (dxCenter * dxCenter + dyCenter * dyCenter > radius * radius) continue;
+                  if (y < cy) {
+                    gravityScore += gray;
+                  } else {
+                    gravityScore -= gray;
+                  }
 
-              const idx = (y * w + x) * 4;
-              const r = data[idx];
-              const g = data[idx + 1];
-              const b = data[idx + 2];
-              const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+                  if (x > 2 && x < imgAreaW - 2 && y > 2 && y < imgAreaH - 2) {
+                    const idxRight = (y * imgAreaW + (x + 2)) * 4;
+                    const idxLeft = (y * imgAreaW + (x - 2)) * 4;
+                    const idxDown = ((y + 2) * imgAreaW + x) * 4;
+                    const idxUp = ((y - 2) * imgAreaW + x) * 4;
 
-              // Top half vs Bottom half luminance (Sky/light on top)
-              if (y < cy) {
-                gravityScore += gray;
-              } else {
-                gravityScore -= gray;
-              }
+                    const gx = (data[idxRight] + data[idxRight+1] + data[idxRight+2] - (data[idxLeft] + data[idxLeft+1] + data[idxLeft+2])) / 3;
+                    const gy = (data[idxDown] + data[idxDown+1] + data[idxDown+2] - (data[idxUp] + data[idxUp+1] + data[idxUp+2])) / 3;
 
-              // Sobel horizontal and vertical gradients
-              if (x > 2 && x < w - 2 && y > 2 && y < h - 2) {
-                const idxRight = (y * w + (x + 2)) * 4;
-                const idxLeft = (y * w + (x - 2)) * 4;
-                const idxDown = ((y + 2) * w + x) * 4;
-                const idxUp = ((y - 2) * w + x) * 4;
-
-                const gx = (data[idxRight] + data[idxRight+1] + data[idxRight+2] - (data[idxLeft] + data[idxLeft+1] + data[idxLeft+2])) / 3;
-                const gy = (data[idxDown] + data[idxDown+1] + data[idxDown+2] - (data[idxUp] + data[idxUp+1] + data[idxUp+2])) / 3;
-
-                const gradMag = Math.sqrt(gx * gx + gy * gy);
-                if (gradMag > 15) {
-                  // Upright alignment score: high gradient aligned with 0, 90, 180, 270 degrees
-                  const theta = Math.atan2(gy, gx);
-                  const rectAlign = Math.cos(4 * theta);
-                  edgeScore += rectAlign * gradMag;
+                    const gradMag = Math.sqrt(gx * gx + gy * gy);
+                    if (gradMag > 15) {
+                      const theta = Math.atan2(gy, gx);
+                      const rectAlign = Math.cos(4 * theta);
+                      edgeScore += rectAlign * gradMag;
+                    }
+                  }
+                  samples++;
                 }
               }
-              samples++;
-            }
-          }
 
-          const totalScore = edgeScore + (gravityScore / (samples || 1)) * 1.5;
-          if (totalScore > maxScore) {
-            maxScore = totalScore;
-            bestAngle = angle;
-          }
-        }
-
-        // Fine search around bestAngle (+-6 degrees with step 1)
-        let fineAngle = bestAngle;
-        let fineMaxScore = -Infinity;
-        for (let angle = bestAngle - 6; angle <= bestAngle + 6; angle += 1) {
-          const normAngle = (angle + 360) % 360;
-          testCtx.clearRect(0, 0, w, h);
-          testCtx.save();
-          testCtx.translate(cx, cy);
-          testCtx.rotate((normAngle * Math.PI) / 180);
-          testCtx.drawImage(srcCanvas, -cx, -cy);
-          testCtx.restore();
-
-          const imgData = testCtx.getImageData(0, 0, w, h);
-          const data = imgData.data;
-          let edgeScore = 0;
-          for (let y = Math.floor(cy - radius); y < cy + radius; y += 3) {
-            for (let x = Math.floor(cx - radius); x < cx + radius; x += 3) {
-              const dxCenter = x - cx;
-              const dyCenter = y - cy;
-              if (dxCenter * dxCenter + dyCenter * dyCenter > radius * radius) continue;
-
-              const idxRight = (y * w + (x + 2)) * 4;
-              const idxLeft = (y * w + (x - 2)) * 4;
-              const idxDown = ((y + 2) * w + x) * 4;
-              const idxUp = ((y - 2) * w + x) * 4;
-
-              const gx = (data[idxRight] - data[idxLeft]);
-              const gy = (data[idxDown] - data[idxUp]);
-              const gradMag = Math.sqrt(gx * gx + gy * gy);
-              if (gradMag > 15) {
-                const theta = Math.atan2(gy, gx);
-                edgeScore += Math.cos(4 * theta) * gradMag;
+              const totalScore = edgeScore + (gravityScore / (samples || 1)) * 1.5;
+              if (totalScore > maxScore) {
+                maxScore = totalScore;
+                bestAngle = angle;
               }
             }
-          }
-          if (edgeScore > fineMaxScore) {
-            fineMaxScore = edgeScore;
-            fineAngle = normAngle;
-          }
-        }
 
-        // Convert rotation angle to slider percentage (0 to 100%)
-        let calculatedPercent = Math.round(((360 - fineAngle) % 360) / 3.6);
-        calculatedPercent = Math.max(5, Math.min(95, calculatedPercent));
+            // Step 2: Fine search +-6 degrees around bestAngle with step 1 degree
+            let fineAngle = bestAngle;
+            let fineMaxScore = -Infinity;
+            for (let angle = bestAngle - 6; angle <= bestAngle + 6; angle += 1) {
+              const normAngle = (angle + 360) % 360;
+              testCtx.clearRect(0, 0, imgAreaW, imgAreaH);
+              testCtx.save();
+              testCtx.translate(cx, cy);
+              testCtx.rotate((normAngle * Math.PI) / 180);
+              testCtx.drawImage(srcCanvas, -cx, -cy);
+              testCtx.restore();
 
-        return {
-          type: 'rotation',
-          angle: fineAngle,
-          percent: calculatedPercent,
-          confidence: 0.85,
-        };
-      });
+              const imgData = testCtx.getImageData(0, 0, imgAreaW, imgAreaH);
+              const data = imgData.data;
+              let edgeScore = 0;
+              for (let y = Math.floor(cy - radius); y < cy + radius; y += 3) {
+                for (let x = Math.floor(cx - radius); x < cx + radius; x += 3) {
+                  const dxCenter = x - cx;
+                  const dyCenter = y - cy;
+                  if (dxCenter * dxCenter + dyCenter * dyCenter > radius * radius) continue;
+
+                  const idxRight = (y * imgAreaW + (x + 2)) * 4;
+                  const idxLeft = (y * imgAreaW + (x - 2)) * 4;
+                  const idxDown = ((y + 2) * imgAreaW + x) * 4;
+                  const idxUp = ((y - 2) * imgAreaW + x) * 4;
+
+                  const gx = (data[idxRight] - data[idxLeft]);
+                  const gy = (data[idxDown] - data[idxUp]);
+                  const gradMag = Math.sqrt(gx * gx + gy * gy);
+                  if (gradMag > 15) {
+                    const theta = Math.atan2(gy, gx);
+                    edgeScore += Math.cos(4 * theta) * gradMag;
+                  }
+                }
+              }
+              if (edgeScore > fineMaxScore) {
+                fineMaxScore = edgeScore;
+                fineAngle = normAngle;
+              }
+            }
+
+            // Convert angle to slider percentage (0 to 100%)
+            let calculatedPercent = Math.round(((360 - fineAngle) % 360) / 3.6);
+            calculatedPercent = Math.max(5, Math.min(95, calculatedPercent));
+
+            resolve({
+              type: 'rotation',
+              angle: fineAngle,
+              percent: calculatedPercent,
+              confidence: 0.88,
+            });
+          };
+
+          img.onerror = () => {
+            resolve({ type: 'unknown', angle: 0, percent: 50, confidence: 0 });
+          };
+          img.src = 'data:image/png;base64,' + b64;
+        });
+      }, base64);
     } catch (err) {
-      logger.warn(`analyzeCaptchaImage error: ${err.message}`);
+      logger.warn(`analyzeCaptchaBuffer error: ${err.message}`);
       return { type: 'unknown', percent: 50, confidence: 0 };
     }
   }
