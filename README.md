@@ -36,7 +36,17 @@ npm install
 
 ### 2. 配置说明 (`keepalive.config.json`)
 
-复制或编辑 `keepalive.config.json`：
+从示例配置文件复制生成正式配置：
+
+```bash
+# Windows
+copy keepalive.config.example.json keepalive.config.json
+
+# Linux / macOS
+cp keepalive.config.example.json keepalive.config.json
+```
+
+编辑 `keepalive.config.json`：
 
 ```json
 {

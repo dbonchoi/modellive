@@ -116,12 +116,20 @@ export async function loadConfig(customConfigPath, cliArgs = {}) {
   const resolvedPath = resolve(process.cwd(), configFilePath);
   let fileConfig = {};
 
-  if (existsSync(resolvedPath)) {
+  let targetPath = resolvedPath;
+  if (!existsSync(targetPath)) {
+    const examplePath = resolve(process.cwd(), 'keepalive.config.example.json');
+    if (existsSync(examplePath)) {
+      targetPath = examplePath;
+    }
+  }
+
+  if (existsSync(targetPath)) {
     try {
-      const content = await readFile(resolvedPath, 'utf8');
+      const content = await readFile(targetPath, 'utf8');
       fileConfig = JSON.parse(content);
     } catch (err) {
-      throw new Error(`Failed to parse config at ${resolvedPath}: ${err.message}`);
+      throw new Error(`Failed to parse config at ${targetPath}: ${err.message}`);
     }
   }
 

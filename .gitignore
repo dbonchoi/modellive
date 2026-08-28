@@ -1,7 +1,9 @@
 node_modules/
 .chrome-profile/
+keepalive.config.json
 keepalive.log
 keepalive.pid
 .env
 .DS_Store
 Thumbs.db
+
