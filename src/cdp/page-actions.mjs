@@ -619,6 +619,11 @@ export class PageActions {
         return { success: false, message: '未能定位到滑块拖动按钮，请在电脑端操作。' };
       }
 
+      const btnBox = await sliderBtn.boundingBox();
+      if (!btnBox) {
+        return { success: false, message: '无法获取滑块按钮坐标。' };
+      }
+
       // Measure real DOM layout geometry of puzzle image vs slider track
       const geom = await page.evaluate(() => {
         const img = document.querySelector('.nc-container img, .nc_scale img, .antd5-modal-content img, div[role="dialog"] img, canvas');
