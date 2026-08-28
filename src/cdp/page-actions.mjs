@@ -98,7 +98,27 @@ export class PageActions {
     let restarted = false;
     let statusDesc = 'Running';
 
-    // 1. Look for ModelScope Code Editor "连接运行时" button (as in user screenshot)
+    // 1. Check if captcha modal is already open
+    const existingCaptcha = await this.checkAndCaptureCaptcha(page);
+    if (existingCaptcha.buffer) {
+      logger.warn(`[${notebookConfig.name}] Security verification / captcha modal is currently open.`);
+      return { restarted: false, statusDesc: 'Captcha Verification Required', captchaBuffer: existingCaptcha.buffer };
+    }
+
+    // 2. Check if "选择实例" modal (Ant Design Modal) is ALREADY OPEN on screen
+    const isModalOpen = await this.isSelectInstanceModalOpen(page);
+    if (isModalOpen) {
+      logger.info(`[${notebookConfig.name}] '选择实例' modal dialog is already open. Proceeding to select & connect...`);
+      const modalRes = await this.handleSelectInstanceModal(page, notebookConfig);
+      restarted = true;
+      if (modalRes.captchaBuffer) {
+        return { restarted: true, statusDesc: 'Captcha Verification Required', captchaBuffer: modalRes.captchaBuffer };
+      }
+      statusDesc = modalRes.success ? 'Runtime instance connected' : 'Handled select instance modal';
+      return { restarted, statusDesc };
+    }
+
+    // 3. Look for ModelScope Code Editor "连接运行时" button
     const connectRuntimeSelectors = [
       'button:has-text("连接运行时")',
       'div[role="button"]:has-text("连接运行时")',
@@ -111,8 +131,10 @@ export class PageActions {
         const btn = await page.$(sel);
         if (btn && (await btn.isVisible())) {
           logger.warn(`[${notebookConfig.name}] Detected '连接运行时' button in Code Editor. Clicking to launch instance...`);
-          await btn.click({ timeout: 5000 });
-          await this.sleep(1500);
+          await page.evaluate(el => el.click(), btn).catch(async () => {
+            await btn.click({ force: true, timeout: 3000 });
+          });
+          await this.sleep(2000);
 
           // Handle the "选择实例" (Select Instance) popup modal
           const modalRes = await this.handleSelectInstanceModal(page, notebookConfig);
@@ -130,14 +152,7 @@ export class PageActions {
       }
     }
 
-    // 2. Check if captcha modal is already on screen
-    const existingCaptcha = await this.checkAndCaptureCaptcha(page);
-    if (existingCaptcha.buffer) {
-      logger.warn(`[${notebookConfig.name}] Security verification / captcha modal is currently open.`);
-      return { restarted: false, statusDesc: 'Captcha Verification Required', captchaBuffer: existingCaptcha.buffer };
-    }
-
-    // 3. Look for reconnect / wake / resume buttons
+    // 4. Look for reconnect / wake / resume buttons
     const resumeBtnSelectors = [
       'button:has-text("重新连接")',
       'button:has-text("恢复运行")',
@@ -151,7 +166,9 @@ export class PageActions {
         const btn = await page.$(sel);
         if (btn && (await btn.isVisible())) {
           logger.warn(`[${notebookConfig.name}] Detected disconnected prompt. Clicking reconnect button: ${sel}`);
-          await btn.click({ timeout: 5000 });
+          await page.evaluate(el => el.click(), btn).catch(async () => {
+            await btn.click({ force: true, timeout: 5000 });
+          });
           restarted = true;
           statusDesc = 'Reconnected after sleep';
           await this.sleep(3000);
@@ -162,7 +179,7 @@ export class PageActions {
       }
     }
 
-    // 4. If on workspace list page, check if specific instance is stopped
+    // 5. If on workspace list page, check if specific instance is stopped
     if (notebookConfig.autoStart) {
       const startBtnSelectors = [
         'button:has-text("启动")',
@@ -175,7 +192,9 @@ export class PageActions {
           const btn = await page.$(sel);
           if (btn && (await btn.isVisible())) {
             logger.warn(`[${notebookConfig.name}] Found stopped instance start button. Clicking start...`);
-            await btn.click({ timeout: 5000 });
+            await page.evaluate(el => el.click(), btn).catch(async () => {
+              await btn.click({ force: true, timeout: 5000 });
+            });
             restarted = true;
             statusDesc = 'Auto-started stopped instance';
             await this.sleep(3000);
@@ -187,11 +206,35 @@ export class PageActions {
       }
     }
 
-    // 5. If running normally inside Code Editor / JupyterLab / DSW workspace, simulate mouse/keyboard activity
+    // 6. If running normally inside Code Editor / JupyterLab / DSW workspace, simulate mouse/keyboard activity
     await this.simulateUserActivity(page);
     statusDesc = 'Active & Heartbeat simulated';
 
     return { restarted, statusDesc };
+  }
+
+  /**
+   * Check if "选择实例" modal is currently open on screen
+   * @param {import('playwright-core').Page} page
+   */
+  static async isSelectInstanceModalOpen(page) {
+    try {
+      const modalSelectors = [
+        'div:has-text("选择实例")',
+        'button:has-text("连接")',
+        '.antd5-modal-title:has-text("选择实例")',
+        'div[role="dialog"]:has-text("选择实例")',
+      ];
+      for (const sel of modalSelectors) {
+        const el = await page.$(sel);
+        if (el && (await el.isVisible())) {
+          return true;
+        }
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -202,18 +245,7 @@ export class PageActions {
    */
   static async handleSelectInstanceModal(page, notebookConfig) {
     try {
-      const modalHeader = await page.$('div:has-text("选择实例"), h3:has-text("选择实例"), h4:has-text("选择实例")');
-      if (!modalHeader) {
-        const connectBtn = await page.$('button:has-text("连接")');
-        if (connectBtn && (await connectBtn.isVisible())) {
-          logger.info(`[${notebookConfig.name}] Found modal '连接' button, clicking...`);
-          await connectBtn.click({ timeout: 5000 });
-          await this.sleep(2000);
-          const cap = await this.checkAndCaptureCaptcha(page);
-          return { success: !cap.buffer, captchaBuffer: cap.buffer };
-        }
-        return { success: false };
-      }
+      logger.info(`[${notebookConfig.name}] Handling '选择实例' modal...`);
 
       // Check instance type preference (e.g., 'GPU', 'AMD GPU', 'CPU')
       const targetType = (notebookConfig.instanceType || 'CPU').toUpperCase();
@@ -221,38 +253,42 @@ export class PageActions {
         const gpuTab = await page.$('div:has-text("GPU 类型"), button:has-text("GPU 类型"), span:has-text("GPU 类型")');
         if (gpuTab && (await gpuTab.isVisible())) {
           logger.info(`[${notebookConfig.name}] Selecting GPU instance tab...`);
-          await gpuTab.click().catch(() => {});
+          await page.evaluate(el => el.click(), gpuTab).catch(() => gpuTab.click({ force: true }));
           await this.sleep(500);
         }
       } else if (targetType.includes('AMD')) {
         const amdTab = await page.$('div:has-text("AMD GPU类型"), button:has-text("AMD GPU类型"), span:has-text("AMD GPU类型")');
         if (amdTab && (await amdTab.isVisible())) {
           logger.info(`[${notebookConfig.name}] Selecting AMD GPU instance tab...`);
-          await amdTab.click().catch(() => {});
+          await page.evaluate(el => el.click(), amdTab).catch(() => amdTab.click({ force: true }));
           await this.sleep(500);
         }
       } else if (targetType.includes('CPU')) {
         const cpuTab = await page.$('div:has-text("CPU 类型"), button:has-text("CPU 类型"), span:has-text("CPU 类型")');
         if (cpuTab && (await cpuTab.isVisible())) {
           logger.info(`[${notebookConfig.name}] Selecting CPU instance tab...`);
-          await cpuTab.click().catch(() => {});
+          await page.evaluate(el => el.click(), cpuTab).catch(() => cpuTab.click({ force: true }));
           await this.sleep(500);
         }
       }
 
       // Click the confirmation "连接" (Connect) button in the modal
       const confirmConnectSelectors = [
-        'button:has-text("连接")',
-        'button.ant-btn-primary:has-text("连接")',
         'div[role="dialog"] button:has-text("连接")',
+        '.antd5-modal button:has-text("连接")',
+        'button.antd5-btn-primary:has-text("连接")',
+        'button.ant-btn-primary:has-text("连接")',
+        'button:has-text("连接")',
       ];
 
       for (const cSel of confirmConnectSelectors) {
         const confirmBtn = await page.$(cSel);
         if (confirmBtn && (await confirmBtn.isVisible())) {
           logger.info(`[${notebookConfig.name}] Clicking modal confirmation button '连接'...`);
-          await confirmBtn.click({ timeout: 5000 });
-          await this.sleep(2000);
+          await page.evaluate(el => el.click(), confirmBtn).catch(async () => {
+            await confirmBtn.click({ force: true, timeout: 5000 });
+          });
+          await this.sleep(2500);
 
           // Check if captcha appeared
           const cap = await this.checkAndCaptureCaptcha(page);
