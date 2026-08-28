@@ -291,11 +291,11 @@ export class H5Server {
     }
     .card {
       width: 100%;
-      max-width: 400px;
+      max-width: 420px;
       background: #1e293b;
       border: 1px solid #334155;
       border-radius: 16px;
-      padding: 10px 14px;
+      padding: 10px 12px;
       box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
       display: flex;
       flex-direction: column;
@@ -334,12 +334,9 @@ export class H5Server {
     .jigsaw-container {
       position: relative;
       width: 100%;
-      height: 25vh;
-      max-height: 180px;
-      min-height: 130px;
       background: #090d16;
       border: 2px solid #38bdf8;
-      border-radius: 10px;
+      border-radius: 12px;
       overflow: hidden;
       margin-bottom: 8px;
       display: flex;
@@ -350,7 +347,8 @@ export class H5Server {
     }
     #jigsaw-img {
       width: 100%;
-      height: 100%;
+      height: auto;
+      max-height: 40vh;
       object-fit: contain;
       display: block;
       pointer-events: none;

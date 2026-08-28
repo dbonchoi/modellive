@@ -370,8 +370,30 @@ export class PageActions {
         return { visible: false, buffer: null };
       }
 
+      // Prefer the inner captcha container to eliminate surrounding modal whitespace
+      let targetElement = captchaModal;
+      const innerSelectors = [
+        '.nc-container',
+        '.nc_scale',
+        'div[class*="captcha"]',
+        'div[class*="nc_"]',
+        'div[class*="verify"]',
+      ];
+      for (const sel of innerSelectors) {
+        try {
+          const inner = await captchaModal.$(sel);
+          if (inner && (await inner.isVisible())) {
+            const b = await inner.boundingBox();
+            if (b && b.width >= 200 && b.height >= 140) {
+              targetElement = inner;
+              break;
+            }
+          }
+        } catch {}
+      }
+
       logger.info('Capturing security verification captcha modal screenshot...');
-      let buffer = await captchaModal.screenshot({ type: 'png' }).catch(async () => {
+      let buffer = await targetElement.screenshot({ type: 'png' }).catch(async () => {
         return await page.screenshot({ fullPage: false, type: 'png' });
       });
 
@@ -597,25 +619,41 @@ export class PageActions {
         return { success: false, message: '未能定位到滑块拖动按钮，请在电脑端操作。' };
       }
 
-      const btnBox = await sliderBtn.boundingBox();
-      if (!btnBox) {
-        return { success: false, message: '无法获取滑块按钮坐标。' };
-      }
+      // Measure real DOM layout geometry of puzzle image vs slider track
+      const geom = await page.evaluate(() => {
+        const img = document.querySelector('.nc-container img, .nc_scale img, .antd5-modal-content img, div[role="dialog"] img, canvas');
+        const track = document.querySelector('.scale_text, .nc_scale, [class*="slide_track"], [class*="slider-track"]');
+        const btn = document.querySelector('#nc_1_n1z, [id$="_n1z"], .btn_slide, .nc_iconfont.btn_slide');
 
-      let trackWidth = 260; // standard fallback
-      if (sliderTrack) {
-        const trackBox = await sliderTrack.boundingBox();
-        if (trackBox && trackBox.width > btnBox.width) {
-          trackWidth = trackBox.width - btnBox.width;
-        }
-      }
+        const imgBox = img ? img.getBoundingClientRect() : null;
+        const trackBox = track ? track.getBoundingClientRect() : null;
+        const btnBox = btn ? btn.getBoundingClientRect() : null;
 
-      const dragDistance = Math.round(trackWidth * (Math.max(0, Math.min(100, targetPercent)) / 100));
+        return {
+          imgWidth: imgBox ? imgBox.width : 280,
+          trackWidth: trackBox ? trackBox.width : 260,
+          btnWidth: btnBox ? btnBox.width : 40,
+        };
+      }).catch(() => ({ imgWidth: 280, trackWidth: 260, btnWidth: 40 }));
+
+      const maxTrackDistance = Math.max(50, (geom.trackWidth || 260) - (geom.btnWidth || 40));
+      const imgWidth = geom.imgWidth || 280;
+
+      // Initial piece resting center is at ~8% of image width (around 22px)
+      // Target notch position is at (targetPercent / 100) * imgWidth
+      // Needed movement = targetNotchX - initialPieceX
+      const initialPieceX = Math.round(imgWidth * 0.08);
+      const targetNotchX = Math.round(imgWidth * (Math.max(0, Math.min(100, targetPercent)) / 100));
+      const requiredMove = targetNotchX - initialPieceX;
+
+      let dragDistance = Math.round(requiredMove);
+      dragDistance = Math.max(0, Math.min(maxTrackDistance, dragDistance));
+
       const startX = btnBox.x + btnBox.width / 2;
       const startY = btnBox.y + btnBox.height / 2;
       const targetX = startX + dragDistance;
 
-      logger.info(`[Captcha Drag] Start=(${startX.toFixed(1)}, ${startY.toFixed(1)}), Target=(${targetX.toFixed(1)}, ${startY.toFixed(1)}), Distance=${dragDistance}px (${targetPercent}%)`);
+      logger.info(`[Captcha Drag] Target=${targetPercent}%, ImgWidth=${imgWidth.toFixed(0)}px, Distance=${dragDistance}px (TrackMax=${maxTrackDistance}px), Start=(${startX.toFixed(1)}, ${startY.toFixed(1)}) -> Target=(${targetX.toFixed(1)}, ${startY.toFixed(1)})`);
 
       // 1. Move to handle center
       await page.mouse.move(startX, startY);
