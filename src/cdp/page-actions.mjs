@@ -1,4 +1,5 @@
 import logger from '../logger.mjs';
+import { GeminiSolver } from '../services/gemini-solver.mjs';
 
 /**
  * Executes keepalive actions on a specific ModelScope Notebook page.
@@ -105,6 +106,15 @@ export class PageActions {
     const existingCaptcha = await this.checkAndCaptureCaptcha(page);
     if (existingCaptcha.buffer) {
       logger.warn(`[${notebookConfig.name}] Security verification / captcha modal is currently open.`);
+      if (scheduleConfig.gemini && scheduleConfig.gemini.enabled) {
+        const aiRes = await this.autoSolveWithGemini(page, existingCaptcha.rawBuffer || existingCaptcha.buffer, scheduleConfig.gemini);
+        if (aiRes.solved) {
+          return { restarted: true, statusDesc: 'Runtime instance connected (Gemini Auto-Solved)' };
+        }
+        if (aiRes.newCaptchaBuffer) {
+          return { restarted: false, statusDesc: 'Captcha Verification Required', captchaBuffer: aiRes.newCaptchaBuffer };
+        }
+      }
       return { restarted: false, statusDesc: 'Captcha Verification Required', captchaBuffer: existingCaptcha.buffer };
     }
 
@@ -117,7 +127,7 @@ export class PageActions {
       }
 
       logger.info(`[${notebookConfig.name}] '选择实例' modal dialog is open. Proceeding to select & connect...`);
-      const modalRes = await this.handleSelectInstanceModal(page, notebookConfig);
+      const modalRes = await this.handleSelectInstanceModal(page, notebookConfig, scheduleConfig);
       restarted = true;
       if (modalRes.captchaBuffer) {
         return { restarted: true, statusDesc: 'Captcha Verification Required', captchaBuffer: modalRes.captchaBuffer };
@@ -150,7 +160,7 @@ export class PageActions {
           await this.sleep(2000);
 
           // Handle the "选择实例" (Select Instance) popup modal
-          const modalRes = await this.handleSelectInstanceModal(page, notebookConfig);
+          const modalRes = await this.handleSelectInstanceModal(page, notebookConfig, scheduleConfig);
           restarted = true;
 
           if (modalRes.captchaBuffer) {
@@ -254,9 +264,10 @@ export class PageActions {
    * Handle "选择实例" modal dialog in Code Editor
    * @param {import('playwright-core').Page} page
    * @param {object} notebookConfig
+   * @param {object} [scheduleConfig={}]
    * @returns {Promise<{ success: boolean, captchaBuffer?: Buffer }>}
    */
-  static async handleSelectInstanceModal(page, notebookConfig) {
+  static async handleSelectInstanceModal(page, notebookConfig, scheduleConfig = {}) {
     try {
       logger.info(`[${notebookConfig.name}] Handling '选择实例' modal...`);
 
@@ -321,7 +332,18 @@ export class PageActions {
         // Check if captcha appeared
         const cap = await this.checkAndCaptureCaptcha(page);
         if (cap.buffer) {
-          logger.warn(`[${notebookConfig.name}] Security captcha popup appeared after clicking connect! Ready for H5 / Feishu slide.`);
+          logger.warn(`[${notebookConfig.name}] Security captcha popup appeared after clicking connect!`);
+
+          if (scheduleConfig.gemini && scheduleConfig.gemini.enabled) {
+            const aiRes = await this.autoSolveWithGemini(page, cap.rawBuffer || cap.buffer, scheduleConfig.gemini);
+            if (aiRes.solved) {
+              return { success: true };
+            }
+            if (aiRes.newCaptchaBuffer) {
+              return { success: false, captchaBuffer: aiRes.newCaptchaBuffer };
+            }
+          }
+
           return { success: false, captchaBuffer: cap.buffer };
         }
 
@@ -335,6 +357,41 @@ export class PageActions {
       logger.warn(`Error handling select instance modal: ${err.message}`);
       return { success: false };
     }
+  }
+
+  /**
+   * Automatically analyze and solve captcha using Gemini 3.7 Flash via agy CLI.
+   * @param {import('playwright-core').Page} page
+   * @param {Buffer} captchaBuffer
+   * @param {object} geminiConfig
+   * @returns {Promise<{ solved: boolean, percent?: number, description?: string, newCaptchaBuffer?: Buffer }>}
+   */
+  static async autoSolveWithGemini(page, captchaBuffer, geminiConfig) {
+    if (!geminiConfig || !geminiConfig.enabled) {
+      return { solved: false };
+    }
+
+    try {
+      const solver = new GeminiSolver(geminiConfig);
+      logger.info('[AutoSolve] Attempting automated visual alignment with Gemini 3.7 Flash...');
+      const result = await solver.solve(captchaBuffer);
+
+      if (result.success && typeof result.percent === 'number') {
+        logger.info(`[AutoSolve] Gemini identified target: "${result.description}" -> Sliding to ${result.percent.toFixed(2)}%`);
+        const dragResult = await this.executeSlideDrag(page, result.percent);
+        if (dragResult.success) {
+          logger.success('[AutoSolve] 🎉 Gemini automated captcha drag succeeded! Instance connected.');
+          return { solved: true, percent: result.percent, description: result.description };
+        } else {
+          logger.warn('[AutoSolve] Gemini drag completed but verification not passed. Preserving new captcha image for manual fallback.');
+          return { solved: false, percent: result.percent, description: result.description, newCaptchaBuffer: dragResult.newCaptchaBuffer };
+        }
+      }
+    } catch (err) {
+      logger.warn(`[AutoSolve] Automated solve error: ${err.message}`);
+    }
+
+    return { solved: false };
   }
 
   /**

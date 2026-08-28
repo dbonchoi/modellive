@@ -81,7 +81,7 @@ export class Scheduler {
     logger.engine(`=== Starting Keepalive Round #${roundNumber} (${targetNotebooks.length} notebooks) ===`);
 
     const results = [];
-    const scheduleConfig = { ...(this.config.schedule || {}), ...(extraScheduleOptions || {}) };
+    const scheduleConfig = { ...(this.config.schedule || {}), gemini: this.config.gemini, ...(extraScheduleOptions || {}) };
     const perUrlDelayMs = (scheduleConfig.perUrlDelaySeconds || 5) * 1000;
 
     for (let i = 0; i < targetNotebooks.length; i += 1) {
