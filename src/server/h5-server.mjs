@@ -19,7 +19,7 @@ export function getLocalIp() {
 }
 
 /**
- * Embedded H5 Web Server for Real-Time Interactive Captcha Slider (Supports Jigsaw & Rotation).
+ * Embedded H5 Web Server for Real-Time Interactive Captcha Slider (Mobile Viewport Optimized).
  */
 export class H5Server {
   /**
@@ -249,28 +249,34 @@ export class H5Server {
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>ModelScope 安全验证交互面板</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>ModelScope 安全验证</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-    body {
+    html, body {
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
+      overflow: hidden;
       background-color: #0f172a;
       color: #f8fafc;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      min-height: 100vh;
+    }
+    body {
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 16px 12px;
+      justify-content: flex-start;
+      padding: 8px 12px;
     }
     .header {
       width: 100%;
-      max-width: 440px;
+      max-width: 400px;
       text-align: center;
-      margin-bottom: 12px;
+      margin-bottom: 6px;
     }
     .header h1 {
-      font-size: 19px;
+      font-size: 16px;
       font-weight: 700;
       color: #38bdf8;
       display: flex;
@@ -279,17 +285,17 @@ export class H5Server {
       gap: 6px;
     }
     .header p {
-      font-size: 13px;
+      font-size: 11px;
       color: #94a3b8;
-      margin-top: 4px;
+      margin-top: 1px;
     }
     .card {
       width: 100%;
-      max-width: 440px;
+      max-width: 400px;
       background: #1e293b;
       border: 1px solid #334155;
-      border-radius: 20px;
-      padding: 16px;
+      border-radius: 16px;
+      padding: 10px 14px;
       box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
       display: flex;
       flex-direction: column;
@@ -301,39 +307,41 @@ export class H5Server {
       width: 100%;
       display: flex;
       background: #0f172a;
-      border-radius: 12px;
-      padding: 4px;
-      margin-bottom: 14px;
+      border-radius: 10px;
+      padding: 2px;
+      margin-bottom: 8px;
       gap: 4px;
     }
     .tab-btn {
       flex: 1;
-      padding: 8px;
+      padding: 6px 4px;
       border: none;
       background: transparent;
       color: #94a3b8;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
-      border-radius: 8px;
+      border-radius: 6px;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.15s;
     }
     .tab-btn.active {
       background: #38bdf8;
       color: #0f172a;
       font-weight: 700;
-      box-shadow: 0 2px 8px rgba(56, 189, 248, 0.4);
     }
 
-    /* Jigsaw Mode: Full rectangular image with interactive sliding target */
+    /* Jigsaw Mode */
     .jigsaw-container {
       position: relative;
       width: 100%;
+      height: 25vh;
+      max-height: 180px;
+      min-height: 130px;
       background: #090d16;
       border: 2px solid #38bdf8;
-      border-radius: 14px;
+      border-radius: 10px;
       overflow: hidden;
-      margin-bottom: 16px;
+      margin-bottom: 8px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -342,18 +350,18 @@ export class H5Server {
     }
     #jigsaw-img {
       width: 100%;
-      height: auto;
+      height: 100%;
+      object-fit: contain;
       display: block;
       pointer-events: none;
     }
-    /* Movable vertical guide line and target notch indicator */
     .target-cursor {
       position: absolute;
       top: 0;
       bottom: 0;
       width: 3px;
       background: #38bdf8;
-      box-shadow: 0 0 12px #38bdf8, 0 0 20px #0284c7;
+      box-shadow: 0 0 10px #38bdf8, 0 0 16px #0284c7;
       left: 50%;
       transform: translateX(-50%);
       pointer-events: none;
@@ -361,16 +369,16 @@ export class H5Server {
     }
     .target-box {
       position: absolute;
-      top: 30%;
+      top: 35%;
       left: 50%;
       transform: translate(-50%, -50%);
-      width: 44px;
-      height: 44px;
+      width: 38px;
+      height: 38px;
       border: 2px dashed #facc15;
       background: rgba(56, 189, 248, 0.2);
-      border-radius: 8px;
+      border-radius: 6px;
       pointer-events: none;
-      box-shadow: 0 0 10px rgba(250, 204, 21, 0.5);
+      box-shadow: 0 0 8px rgba(250, 204, 21, 0.4);
       z-index: 11;
       display: flex;
       align-items: center;
@@ -380,17 +388,17 @@ export class H5Server {
       font-weight: bold;
     }
 
-    /* Rotation Mode: Circular Rotating Preview */
+    /* Rotation Mode */
     .rotation-container {
       position: relative;
-      width: 240px;
-      height: 240px;
+      width: 170px;
+      height: 170px;
       border-radius: 50%;
       overflow: hidden;
       background: #090d16;
-      border: 4px solid #38bdf8;
-      box-shadow: 0 0 20px rgba(56, 189, 248, 0.35);
-      margin: 4px 0 16px 0;
+      border: 3px solid #38bdf8;
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.3);
+      margin: 2px 0 8px 0;
       display: none;
       align-items: center;
       justify-content: center;
@@ -418,71 +426,53 @@ export class H5Server {
       align-items: center;
       background: #0f172a;
       border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 10px 16px;
-      margin-bottom: 16px;
-      font-size: 14px;
+      border-radius: 10px;
+      padding: 6px 12px;
+      margin-bottom: 8px;
+      font-size: 13px;
     }
     .stat-label { color: #94a3b8; }
-    .stat-value { font-weight: 700; color: #38bdf8; font-family: monospace; font-size: 16px; }
+    .stat-value { font-weight: 700; color: #38bdf8; font-family: monospace; font-size: 15px; }
 
     .slider-wrap {
       width: 100%;
-      margin-bottom: 16px;
+      margin-bottom: 10px;
+      padding: 0 4px;
     }
     input[type=range] {
       -webkit-appearance: none;
       width: 100%;
-      height: 14px;
-      border-radius: 7px;
+      height: 12px;
+      border-radius: 6px;
       background: #334155;
       outline: none;
     }
     input[type=range]::-webkit-slider-thumb {
       -webkit-appearance: none;
       appearance: none;
-      width: 34px;
-      height: 34px;
+      width: 32px;
+      height: 32px;
       border-radius: 50%;
       background: #38bdf8;
       cursor: pointer;
-      box-shadow: 0 0 12px #38bdf8;
+      box-shadow: 0 0 10px #38bdf8;
       border: 3px solid #ffffff;
     }
-
-    .quick-row {
-      width: 100%;
-      display: flex;
-      gap: 6px;
-      margin-bottom: 12px;
-    }
-    .btn-quick {
-      flex: 1;
-      padding: 8px 4px;
-      background: #0f172a;
-      color: #94a3b8;
-      border: 1px solid #334155;
-      border-radius: 8px;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .btn-quick:active { background: #38bdf8; color: #0f172a; }
 
     .fine-tune-row {
       width: 100%;
       display: flex;
-      gap: 8px;
-      margin-bottom: 16px;
+      gap: 6px;
+      margin-bottom: 10px;
     }
     .btn-tune {
       flex: 1;
-      padding: 10px;
+      padding: 8px 4px;
       background: #334155;
       color: #e2e8f0;
       border: none;
-      border-radius: 10px;
-      font-size: 14px;
+      border-radius: 8px;
+      font-size: 13px;
       font-weight: 600;
       cursor: pointer;
     }
@@ -490,41 +480,41 @@ export class H5Server {
 
     .btn-submit {
       width: 100%;
-      padding: 14px;
+      padding: 12px;
       background: linear-gradient(135deg, #0284c7, #2563eb);
       color: #ffffff;
       border: none;
-      border-radius: 14px;
-      font-size: 16px;
+      border-radius: 12px;
+      font-size: 15px;
       font-weight: 700;
       cursor: pointer;
-      box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4);
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 8px;
+      gap: 6px;
     }
     .btn-submit:active { transform: scale(0.98); opacity: 0.9; }
     .btn-submit:disabled { background: #475569; cursor: not-allowed; box-shadow: none; }
 
     .btn-refresh {
-      margin-top: 12px;
+      margin-top: 6px;
       background: transparent;
       border: none;
       color: #94a3b8;
-      font-size: 13px;
+      font-size: 12px;
       cursor: pointer;
       display: flex;
       align-items: center;
       gap: 4px;
-      padding: 8px;
+      padding: 4px;
     }
 
     #status-msg {
-      margin-top: 12px;
-      font-size: 14px;
+      margin-top: 4px;
+      font-size: 12px;
       text-align: center;
-      min-height: 24px;
+      min-height: 18px;
     }
     .msg-success { color: #4ade80; font-weight: 600; }
     .msg-error { color: #f87171; font-weight: 600; }
@@ -532,8 +522,8 @@ export class H5Server {
 
     .loading-spinner {
       display: inline-block;
-      width: 16px;
-      height: 16px;
+      width: 14px;
+      height: 14px;
       border: 2px solid rgba(255, 255, 255, 0.3);
       border-radius: 50%;
       border-top-color: #ffffff;
@@ -545,13 +535,13 @@ export class H5Server {
 <body>
 
   <div class="header">
-    <h1>📱 手机实时滑动验证面板</h1>
-    <p>拖动滑块使参考标靶精确对齐缺口或回正</p>
+    <h1>📱 手机滑动验证面板</h1>
+    <p>拖动滑块使标靶对准缺口或回正</p>
   </div>
 
   <div class="card">
     <div class="tabs">
-      <button id="tab-jigsaw" class="tab-btn active" onclick="switchMode('jigsaw')">🧩 拼图从左到右滑动</button>
+      <button id="tab-jigsaw" class="tab-btn active" onclick="switchMode('jigsaw')">🧩 拼图从左到右平移</button>
       <button id="tab-rotation" class="tab-btn" onclick="switchMode('rotation')">🔄 旋转回正模式</button>
     </div>
 
@@ -582,14 +572,6 @@ export class H5Server {
 
     <div class="slider-wrap">
       <input type="range" id="slider" min="0" max="100" step="0.5" value="50">
-    </div>
-
-    <div class="quick-row">
-      <button class="btn-quick" onclick="setSlider(20)">20%</button>
-      <button class="btn-quick" onclick="setSlider(35)">35%</button>
-      <button class="btn-quick" onclick="setSlider(50)">50%</button>
-      <button class="btn-quick" onclick="setSlider(65)">65%</button>
-      <button class="btn-quick" onclick="setSlider(80)">80%</button>
     </div>
 
     <div class="fine-tune-row">
@@ -670,11 +652,6 @@ export class H5Server {
       slider.value = pct;
       updateView(pct);
     });
-
-    function setSlider(val) {
-      slider.value = val;
-      updateView(val);
-    }
 
     function adjustSlider(delta) {
       const newPercent = Math.max(0, Math.min(100, currentPercent + delta));
