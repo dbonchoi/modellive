@@ -1,0 +1,23 @@
+{
+  "name": "modellive",
+  "version": "1.0.0",
+  "description": "ModelScope Notebook Keepalive Daemon with CDP & Feishu Integration",
+  "type": "module",
+  "main": "src/index.mjs",
+  "scripts": {
+    "start": "node src/index.mjs",
+    "keepalive": "node src/index.mjs",
+    "keepalive:loop": "node src/index.mjs --loop",
+    "keepalive:daemon": "node src/index.mjs --loop --pid-file keepalive.pid --log-file keepalive.log",
+    "chrome": "node scripts/start-chrome.mjs"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.40.0",
+    "playwright-core": "^1.50.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

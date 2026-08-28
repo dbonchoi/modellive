@@ -1,0 +1,7 @@
+node_modules/
+.chrome-profile/
+keepalive.log
+keepalive.pid
+.env
+.DS_Store
+Thumbs.db
