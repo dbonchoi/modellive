@@ -190,6 +190,22 @@ Options:
     }
   });
 
+  scheduler.on('instanceStarted', async ({ notebook }) => {
+    if (notifier.enabled) {
+      logger.success(`[${notebook.name}] Notifying Feishu: Instance is active and protected!`);
+      await notifier.sendText(
+        `🎉 **ModelScope 实例已在云端启动成功！**\n\n🟢 实例【${notebook.name}】当前处于 **Running** 运行状态。\n💻 PC 守护进程已自动无缝接管 **24/7 全自动保活**，您无需再保持手机页面！`
+      );
+    }
+  });
+
+  scheduler.on('instanceDisconnected', async ({ notebook }) => {
+    if (notifier.enabled) {
+      logger.warn(`[${notebook.name}] Instance disconnected in cloud, sending Launch Card to Feishu...`);
+      await notifier.sendLaunchPrompt(notebook.name, notebook.url || 'https://www.modelscope.cn/code/workspace');
+    }
+  });
+
   scheduler.on('captchaRequired', async ({ notebook, buffer }) => {
     h5Server.setCaptchaBuffer(buffer);
     if (notifier.enabled) {

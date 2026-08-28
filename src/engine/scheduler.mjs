@@ -17,11 +17,14 @@ export class Scheduler {
     this.isRunning = false;
     this.isPaused = false;
     this.abortController = null;
+    this.previousStatusMap = new Map();
     this.listeners = {
       roundComplete: [],
       loginExpired: [],
       error: [],
       recovery: [],
+      instanceStarted: [],
+      instanceDisconnected: [],
     };
   }
 
@@ -109,6 +112,23 @@ export class Scheduler {
         // Execute keepalive action
         const actionResult = await PageActions.execute(page, nb, scheduleConfig);
 
+        const prevStatus = this.previousStatusMap.get(nb.id);
+        const isRunning = Boolean(actionResult.isRunning || (actionResult.success && actionResult.status?.includes('Running')));
+
+        if (isRunning) {
+          if (prevStatus !== 'Running') {
+            this.previousStatusMap.set(nb.id, 'Running');
+            logger.success(`[${nb.name}] State transition: ${prevStatus || 'Initial'} -> Running!`);
+            this.emit('instanceStarted', { notebook: nb });
+          }
+        } else {
+          if (prevStatus !== 'Disconnected') {
+            this.previousStatusMap.set(nb.id, 'Disconnected');
+            logger.warn(`[${nb.name}] State transition: ${prevStatus || 'Initial'} -> Disconnected`);
+            this.emit('instanceDisconnected', { notebook: nb, result: actionResult });
+          }
+        }
+
         if (actionResult.captchaBuffer) {
           stateStore.recordFailure(nb.id, 'Captcha verification required', actionResult.durationMs);
           this.emit('captchaRequired', { notebook: nb, buffer: actionResult.captchaBuffer, page });
@@ -117,9 +137,9 @@ export class Scheduler {
           stateStore.recordSuccess(nb.id, actionResult);
           results.push({ id: nb.id, ok: true, ...actionResult });
         } else {
-          stateStore.recordFailure(nb.id, actionResult.error, actionResult.durationMs);
-          this.emit('error', { notebook: nb, error: actionResult.error });
-          results.push({ id: nb.id, ok: false, error: actionResult.error });
+          stateStore.recordFailure(nb.id, actionResult.error || actionResult.status, actionResult.durationMs);
+          this.emit('error', { notebook: nb, error: actionResult.error || actionResult.status });
+          results.push({ id: nb.id, ok: false, error: actionResult.error || actionResult.status });
         }
       } catch (err) {
         logger.error(`[${nb.name}] Unhandled exception during keepalive: ${err.message}`);

@@ -321,6 +321,53 @@ export class CardTemplates {
       ],
     };
   }
+  /**
+   * Build Launch Prompt Card (Option A: Native mobile launch + PC auto-takeover).
+   * @param {string} notebookName
+   * @param {string} workspaceUrl
+   */
+  static buildLaunchPromptCard(notebookName = 'ModelScope工作空间', workspaceUrl = 'https://www.modelscope.cn/code/workspace') {
+    return {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { tag: 'plain_text', content: '🚀 ModelScope 实例等待启动' },
+        template: 'blue',
+      },
+      elements: [
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: `**工作空间**: **${notebookName}**\n**当前状态**: 🟡 尚未连接运行\n\n📱 **启动步骤（手机原生体验）**：\n1. 点击下方【**🚀 手机直达打开工作空间**】在手机浏览器中打开；\n2. 点击【连接运行时】并使用原生手势滑动通过验证；\n3. 启动成功后，PC 守护进程将**自动无缝接管 24/7 全自动保活**！`,
+          },
+        },
+        { tag: 'hr' },
+        {
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '🚀 手机直达打开工作空间' },
+              type: 'primary',
+              url: workspaceUrl,
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '🔄 启动后点此立即检测接管' },
+              type: 'default',
+              value: { action: 'manual_refresh' },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '📊 查看状态看板' },
+              type: 'default',
+              value: { action: 'view_status' },
+            },
+          ],
+        },
+      ],
+    };
+  }
 }
 
 export default CardTemplates;

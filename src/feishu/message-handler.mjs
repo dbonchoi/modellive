@@ -78,37 +78,15 @@ export class MessageHandler {
           const alreadyRunning = await PageActions.isInstanceRunning(page);
           if (alreadyRunning) {
             await this.notifier.sendCard(
-              CardTemplates.buildResultCard('实例已在运行中', '✅ 当前实例已处于连接运行状态，无需重复启动。保活心跳正常进行中。', true),
+              CardTemplates.buildResultCard('实例已在运行中', '🟢 当前 ModelScope 实例已在云端处于运行中状态，PC 守护进程正持续全自动保活，无需重复启动。', true),
               targetId
             );
             break;
           }
         } catch {}
 
-        await this.notifier.sendCard(
-          CardTemplates.buildResultCard('启动实例指令', `收到启动指令，正在尝试连接【${instanceType}】实例...`, true),
-          targetId
-        );
-
-        try {
-          if (this.scheduler.config.notebooks.length > 0) {
-            this.scheduler.config.notebooks[0].instanceType = instanceType;
-          }
-          const result = await this.scheduler.runRound(null, { forceStart: true });
-          
-          const captchaResult = result.results?.find(r => r.captchaBuffer || r.error === 'Captcha verification required');
-          if (captchaResult && captchaResult.captchaBuffer) {
-            await this.notifier.sendCaptchaCard(captchaResult.captchaBuffer, targetId, '检测到实例连接安全验证（拼图缺口/旋转还原），请在下方进行滑块拖动：');
-          } else {
-            const card = CardTemplates.buildStatusCard(result.summary);
-            await this.notifier.sendCard(card, targetId);
-          }
-        } catch (err) {
-          await this.notifier.sendCard(
-            CardTemplates.buildResultCard('启动实例失败', err.message, false),
-            targetId
-          );
-        }
+        const nb = this.scheduler.config.notebooks?.[0] || { name: 'ModelScope工作空间', url: 'https://www.modelscope.cn/code/workspace' };
+        await this.notifier.sendLaunchPrompt(nb.name, nb.url, targetId);
         break;
       }
 

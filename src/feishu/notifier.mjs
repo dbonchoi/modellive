@@ -178,6 +178,13 @@ export class FeishuNotifier {
     }
     return true;
   }
+  /**
+   * Send Launch Prompt Card when instance is disconnected.
+   */
+  async sendLaunchPrompt(notebookName = 'ModelScope工作空间', workspaceUrl = 'https://www.modelscope.cn/code/workspace', receiveId = null) {
+    const card = CardTemplates.buildLaunchPromptCard(notebookName, workspaceUrl);
+    return await this.sendCard(card, receiveId);
+  }
 }
 
 export default FeishuNotifier;

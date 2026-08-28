@@ -41,13 +41,15 @@ export class PageActions {
       // Check instance running status
       const running = await this.isInstanceRunning(page);
       if (running) {
-        logger.info(`[${notebookConfig.name}] Instance is already running and connected.`);
+        logger.success(`[${notebookConfig.name}] 🎉 Instance is active in cloud. Auto-assumed keepalive protection.`);
+        await this.simulateUserActivity(page).catch(() => {});
         return {
           success: true,
           action,
           status: 'Running',
           durationMs: Date.now() - startedAt,
           restarted: false,
+          isRunning: true,
         };
       }
 
