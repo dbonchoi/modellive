@@ -1,5 +1,6 @@
 import http from 'http';
 import os from 'os';
+import { WebSocketServer } from 'ws';
 import logger from '../logger.mjs';
 import { PageActions } from '../cdp/page-actions.mjs';
 
@@ -19,7 +20,7 @@ export function getLocalIp() {
 }
 
 /**
- * Embedded H5 Web Server for Real-Time Interactive Captcha Slider (Mobile Viewport Optimized).
+ * Live Remote Control & Screencast Web Server for Real-Time Mobile Chrome Interaction.
  */
 export class H5Server {
   /**
@@ -37,8 +38,12 @@ export class H5Server {
     this.scheduler = scheduler;
     this.notifier = notifier;
     this.server = null;
+    this.wss = null;
+    this.cdpSession = null;
+    this.activeClients = new Set();
     this.currentCaptchaBuffer = null;
     this.lastPercent = 50;
+    this.isScreencasting = false;
   }
 
   /**
@@ -61,7 +66,7 @@ export class H5Server {
   }
 
   /**
-   * Start the HTTP server.
+   * Start the HTTP and WebSocket streaming server.
    */
   async start() {
     return new Promise((resolve) => {
@@ -80,7 +85,7 @@ export class H5Server {
         }
 
         try {
-          if (url.pathname === '/captcha' || url.pathname === '/') {
+          if (url.pathname === '/captcha' || url.pathname === '/' || url.pathname === '/live') {
             this.handleServeH5(req, res);
           } else if (url.pathname === '/api/captcha-state') {
             await this.handleGetState(req, res);
@@ -99,9 +104,13 @@ export class H5Server {
         }
       });
 
+      // Attach WebSocket Server for Real-Time Low-Latency Screencast & Input Streaming
+      this.wss = new WebSocketServer({ server: this.server, path: '/stream' });
+      this.setupWebSocketHandlers();
+
       this.server.listen(this.port, '0.0.0.0', () => {
         const h5Url = this.getUrl();
-        logger.success(`[H5Server] Interactive Captcha Web Server listening on ${h5Url}`);
+        logger.success(`[H5Server] Live Screencast Remote Control Server listening on ${h5Url}`);
         resolve(true);
       });
 
@@ -113,9 +122,187 @@ export class H5Server {
   }
 
   /**
-   * Stop the HTTP server.
+   * Setup WebSocket connection and CDP screencast bridge.
+   */
+  setupWebSocketHandlers() {
+    this.wss.on('connection', async (ws) => {
+      this.activeClients.add(ws);
+      logger.info(`[H5Server] Mobile client connected to Live Stream (Active clients: ${this.activeClients.size})`);
+
+      try {
+        await this.ensureCdpScreencast();
+      } catch (err) {
+        logger.warn(`[H5Server] Failed to start CDP screencast: ${err.message}`);
+      }
+
+      ws.on('message', async (message) => {
+        try {
+          const msg = JSON.parse(message.toString());
+          await this.handleClientMessage(msg, ws);
+        } catch (err) {
+          logger.warn(`[H5Server] Error handling WS message: ${err.message}`);
+        }
+      });
+
+      ws.on('close', () => {
+        this.activeClients.delete(ws);
+        logger.info(`[H5Server] Mobile client disconnected (Active clients: ${this.activeClients.size})`);
+        if (this.activeClients.size === 0) {
+          this.stopCdpScreencast().catch(() => {});
+        }
+      });
+
+      ws.on('error', (err) => {
+        logger.warn(`[H5Server] WS Client error: ${err.message}`);
+      });
+    });
+  }
+
+  /**
+   * Initialize or reuse CDP session for screencasting.
+   */
+  async ensureCdpScreencast() {
+    if (this.isScreencasting && this.cdpSession) {
+      return;
+    }
+
+    const page = await this.browserManager.getPrimaryPage();
+    if (!page) {
+      logger.warn('[H5Server] No primary page available for screencast.');
+      return;
+    }
+
+    if (!this.cdpSession) {
+      this.cdpSession = await page.context().newCDPSession(page);
+
+      this.cdpSession.on('Page.screencastFrame', async ({ data, sessionId, metadata }) => {
+        try {
+          await this.cdpSession.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+        } catch {}
+
+        if (this.activeClients.size > 0) {
+          const payload = JSON.stringify({ type: 'frame', data, metadata });
+          for (const client of this.activeClients) {
+            if (client.readyState === 1) {
+              client.send(payload);
+            }
+          }
+        }
+      });
+    }
+
+    logger.info('[H5Server] Starting 30FPS CDP Live Screencast...');
+    await this.cdpSession.send('Page.startScreencast', {
+      format: 'jpeg',
+      quality: 85,
+      maxWidth: 1280,
+      maxHeight: 800,
+      everyNthFrame: 1,
+    });
+    this.isScreencasting = true;
+  }
+
+  /**
+   * Stop CDP screencast.
+   */
+  async stopCdpScreencast() {
+    if (this.cdpSession && this.isScreencasting) {
+      try {
+        await this.cdpSession.send('Page.stopScreencast').catch(() => {});
+      } catch {}
+      this.isScreencasting = false;
+      logger.info('[H5Server] Stopped CDP Screencast (no active viewers).');
+    }
+  }
+
+  /**
+   * Handle incoming touch/mouse input events from mobile browser.
+   */
+  async handleClientMessage(msg, ws) {
+    if (!this.cdpSession) return;
+
+    if (msg.type === 'input') {
+      const { event, x, y, buttons } = msg;
+      try {
+        if (event === 'mousedown') {
+          await this.cdpSession.send('Input.dispatchMouseEvent', {
+            type: 'mousePressed',
+            x: Math.round(x),
+            y: Math.round(y),
+            button: 'left',
+            clickCount: 1,
+          });
+        } else if (event === 'mousemove') {
+          await this.cdpSession.send('Input.dispatchMouseEvent', {
+            type: 'mouseMoved',
+            x: Math.round(x),
+            y: Math.round(y),
+            button: 'left',
+            buttons: buttons !== undefined ? buttons : 1,
+          });
+        } else if (event === 'mouseup') {
+          await this.cdpSession.send('Input.dispatchMouseEvent', {
+            type: 'mouseReleased',
+            x: Math.round(x),
+            y: Math.round(y),
+            button: 'left',
+          });
+
+          // Check if captcha is passed after mouse release
+          setTimeout(async () => {
+            try {
+              const page = await this.browserManager.getPrimaryPage();
+              const cap = await PageActions.checkAndCaptureCaptcha(page);
+              if (!cap.visible) {
+                ws.send(JSON.stringify({ type: 'status', passed: true, message: '🎉 验证通过！' }));
+                if (this.notifier) {
+                  this.notifier.sendText(
+                    '🎉 ModelScope 实例已在手机实时远程操作中完成验证并成功连接！',
+                    this.notifier.config?.feishu?.adminUserIds?.[0]
+                  ).catch(() => {});
+                }
+              }
+            } catch {}
+          }, 1500);
+        }
+      } catch (err) {
+        logger.warn(`[H5Server] Failed to dispatch mouse event: ${err.message}`);
+      }
+    } else if (msg.type === 'refresh') {
+      try {
+        const page = await this.browserManager.getPrimaryPage();
+        await PageActions.refreshCaptcha(page);
+        ws.send(JSON.stringify({ type: 'toast', message: '已刷新验证码图片' }));
+      } catch (err) {
+        ws.send(JSON.stringify({ type: 'toast', message: `刷新失败: ${err.message}` }));
+      }
+    } else if (msg.type === 'check') {
+      try {
+        const page = await this.browserManager.getPrimaryPage();
+        const cap = await PageActions.checkAndCaptureCaptcha(page);
+        ws.send(JSON.stringify({
+          type: 'status',
+          passed: !cap.visible,
+          message: !cap.visible ? '🎉 验证已完成！' : '验证尚未通过，请拖动滑块完成拼图。',
+        }));
+      } catch (err) {
+        ws.send(JSON.stringify({ type: 'status', passed: false, message: err.message }));
+      }
+    }
+  }
+
+  /**
+   * Stop the HTTP & WebSocket server.
    */
   async stop() {
+    await this.stopCdpScreencast();
+    if (this.cdpSession) {
+      try { await this.cdpSession.detach(); } catch {}
+      this.cdpSession = null;
+    }
+    if (this.wss) {
+      this.wss.close();
+    }
     if (this.server) {
       return new Promise((resolve) => {
         this.server.close(() => {
@@ -127,7 +314,7 @@ export class H5Server {
   }
 
   /**
-   * Get latest captcha state.
+   * Get latest captcha state (Fallback API).
    */
   async handleGetState(req, res) {
     try {
@@ -160,7 +347,7 @@ export class H5Server {
   }
 
   /**
-   * Handle slide execution submitted from H5.
+   * Handle slide execution submitted from H5 (Fallback mode).
    */
   async handleSubmitSlide(req, res) {
     let body = '';
@@ -178,7 +365,6 @@ export class H5Server {
 
         if (dragResult.success) {
           this.currentCaptchaBuffer = null;
-          // Send post-drag success feedback to Feishu with screenshot
           if (this.notifier && this.notifier.enabled) {
             const targetUser = this.notifier.config?.feishu?.adminUserIds?.[0];
             if (dragResult.postDragBuffer) {
@@ -196,7 +382,6 @@ export class H5Server {
               ).catch(() => {});
             }
           }
-          // Resume scheduler
           if (this.scheduler) {
             this.scheduler.runRound().catch(() => {});
           }
@@ -207,7 +392,6 @@ export class H5Server {
             message: '🎉 验证通过！ModelScope 实例连接成功！',
           }));
         } else {
-          // Failed: send post-drag screenshot to Feishu so user can see actual alignment in Chrome
           if (this.notifier && this.notifier.enabled) {
             const targetUser = this.notifier.config?.feishu?.adminUserIds?.[0];
             const feedbackImg = dragResult.postDragBuffer || dragResult.newCaptchaBuffer;
@@ -271,7 +455,7 @@ export class H5Server {
   }
 
   /**
-   * Serve the responsive mobile-first H5 application.
+   * Serve the responsive mobile-first live remote control H5 application.
    */
   handleServeH5(req, res) {
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -282,491 +466,375 @@ export class H5Server {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>ModelScope 安全验证</title>
+  <title>ModelScope 远程实时操控</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; touch-action: none; }
     html, body {
       width: 100%;
       height: 100%;
       height: 100dvh;
       overflow: hidden;
-      background-color: #0f172a;
+      background-color: #0b0f19;
       color: #f8fafc;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
     }
     body {
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: flex-start;
-      padding: 8px 12px;
+      justify-content: space-between;
     }
-    .header {
+    header {
       width: 100%;
-      max-width: 400px;
-      text-align: center;
-      margin-bottom: 6px;
-    }
-    .header h1 {
-      font-size: 16px;
-      font-weight: 700;
-      color: #38bdf8;
+      padding: 10px 16px;
+      background: #111827;
+      border-bottom: 1px solid #1f2937;
       display: flex;
       align-items: center;
-      justify-content: center;
-      gap: 6px;
-    }
-    .header p {
-      font-size: 11px;
-      color: #94a3b8;
-      margin-top: 1px;
-    }
-    .card {
-      width: 100%;
-      max-width: 420px;
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 16px;
-      padding: 10px 12px;
-      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    /* Mode Tabs */
-    .tabs {
-      width: 100%;
-      display: flex;
-      background: #0f172a;
-      border-radius: 10px;
-      padding: 2px;
-      margin-bottom: 8px;
-      gap: 4px;
-    }
-    .tab-btn {
-      flex: 1;
-      padding: 6px 4px;
-      border: none;
-      background: transparent;
-      color: #94a3b8;
-      font-size: 12px;
-      font-weight: 600;
-      border-radius: 6px;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .tab-btn.active {
-      background: #38bdf8;
-      color: #0f172a;
-      font-weight: 700;
-    }
-
-    /* Jigsaw Mode */
-    .jigsaw-container {
-      position: relative;
-      width: 100%;
-      background: #090d16;
-      border: 2px solid #38bdf8;
-      border-radius: 12px;
-      overflow: hidden;
-      margin-bottom: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      user-select: none;
-      touch-action: none;
-    }
-    #jigsaw-img {
-      width: 100%;
-      height: auto;
-      max-height: 40vh;
-      object-fit: contain;
-      display: block;
-      pointer-events: none;
-    }
-    .target-cursor {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      width: 3px;
-      background: #38bdf8;
-      box-shadow: 0 0 10px #38bdf8, 0 0 16px #0284c7;
-      left: 50%;
-      transform: translateX(-50%);
-      pointer-events: none;
+      justify-content: space-between;
       z-index: 10;
     }
-    .target-box {
-      position: absolute;
-      top: 35%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      width: 38px;
-      height: 38px;
-      border: 2px dashed #facc15;
-      background: rgba(56, 189, 248, 0.2);
-      border-radius: 6px;
-      pointer-events: none;
-      box-shadow: 0 0 8px rgba(250, 204, 21, 0.4);
-      z-index: 11;
+    .brand {
       display: flex;
       align-items: center;
-      justify-content: center;
-      font-size: 10px;
-      color: #facc15;
-      font-weight: bold;
+      gap: 8px;
     }
-
-    /* Rotation Mode */
-    .rotation-container {
-      position: relative;
-      width: 170px;
-      height: 170px;
+    .status-badge {
+      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(34, 197, 94, 0.15);
+      color: #4ade80;
+      border: 1px solid rgba(34, 197, 94, 0.3);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-weight: 500;
+    }
+    .status-badge.offline {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
-      overflow: hidden;
-      background: #090d16;
-      border: 3px solid #38bdf8;
-      box-shadow: 0 0 16px rgba(56, 189, 248, 0.3);
-      margin: 2px 0 8px 0;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      user-select: none;
+      background: #22c55e;
+      animation: pulse 1.5s infinite;
     }
-    #rotation-img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      transform-origin: center center;
-      pointer-events: none;
+    .status-badge.offline .status-dot {
+      background: #ef4444;
+      animation: none;
     }
-    .guide-v, .guide-h {
-      position: absolute;
-      background: rgba(255, 255, 255, 0.25);
-      pointer-events: none;
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.2); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.8; }
     }
-    .guide-v { width: 1px; height: 100%; left: 50%; top: 0; }
-    .guide-h { height: 1px; width: 100%; top: 50%; left: 0; }
-
-    .live-stats {
+    .viewport-container {
+      flex: 1;
       width: 100%;
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      background: #0f172a;
-      border: 1px solid #334155;
-      border-radius: 10px;
-      padding: 6px 12px;
-      margin-bottom: 8px;
-      font-size: 13px;
+      justify-content: center;
+      position: relative;
+      background: #000;
+      overflow: hidden;
     }
-    .stat-label { color: #94a3b8; }
-    .stat-value { font-weight: 700; color: #38bdf8; font-family: monospace; font-size: 15px; }
-
-    .slider-wrap {
-      width: 100%;
-      margin-bottom: 10px;
-      padding: 0 4px;
+    canvas#screencast {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+      cursor: crosshair;
     }
-    input[type=range] {
-      -webkit-appearance: none;
-      width: 100%;
-      height: 12px;
-      border-radius: 6px;
-      background: #334155;
-      outline: none;
-    }
-    input[type=range]::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
+    .touch-cursor {
+      position: absolute;
       width: 32px;
       height: 32px;
       border-radius: 50%;
-      background: #38bdf8;
-      cursor: pointer;
-      box-shadow: 0 0 10px #38bdf8;
-      border: 3px solid #ffffff;
+      background: rgba(59, 130, 246, 0.4);
+      border: 2px solid #60a5fa;
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      display: none;
+      z-index: 5;
+      box-shadow: 0 0 12px rgba(59, 130, 246, 0.8);
     }
-
-    .fine-tune-row {
-      width: 100%;
+    .instructions-bar {
+      position: absolute;
+      top: 8px;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(8px);
+      padding: 6px 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.1);
+      font-size: 12px;
+      color: #94a3b8;
       display: flex;
+      align-items: center;
       gap: 6px;
-      margin-bottom: 10px;
+      pointer-events: none;
     }
-    .btn-tune {
+    footer {
+      width: 100%;
+      padding: 12px 16px env(safe-area-inset-bottom, 12px);
+      background: #111827;
+      border-top: 1px solid #1f2937;
+      display: flex;
+      gap: 10px;
+      z-index: 10;
+    }
+    .btn {
       flex: 1;
-      padding: 8px 4px;
-      background: #334155;
-      color: #e2e8f0;
+      height: 44px;
+      border-radius: 10px;
       border: none;
-      border-radius: 8px;
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 600;
       cursor: pointer;
-    }
-    .btn-tune:active { background: #475569; transform: scale(0.97); }
-
-    .btn-submit {
-      width: 100%;
-      padding: 12px;
-      background: linear-gradient(135deg, #0284c7, #2563eb);
-      color: #ffffff;
-      border: none;
-      border-radius: 12px;
-      font-size: 15px;
-      font-weight: 700;
-      cursor: pointer;
-      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
+      transition: all 0.15s ease;
+      touch-action: manipulation;
     }
-    .btn-submit:active { transform: scale(0.98); opacity: 0.9; }
-    .btn-submit:disabled { background: #475569; cursor: not-allowed; box-shadow: none; }
-
-    .btn-refresh {
-      margin-top: 6px;
-      background: transparent;
-      border: none;
-      color: #94a3b8;
-      font-size: 12px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      padding: 4px;
+    .btn:active {
+      transform: scale(0.97);
     }
-
-    #status-msg {
-      margin-top: 4px;
-      font-size: 12px;
-      text-align: center;
-      min-height: 18px;
+    .btn-secondary {
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
     }
-    .msg-success { color: #4ade80; font-weight: 600; }
-    .msg-error { color: #f87171; font-weight: 600; }
-    .msg-info { color: #38bdf8; }
-
-    .loading-spinner {
-      display: inline-block;
-      width: 14px;
-      height: 14px;
-      border: 2px solid rgba(255, 255, 255, 0.3);
-      border-radius: 50%;
-      border-top-color: #ffffff;
-      animation: spin 0.8s linear infinite;
+    .btn-primary {
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    .toast {
+      position: fixed;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.95);
+      color: #fff;
+      padding: 10px 20px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 500;
+      border: 1px solid rgba(255,255,255,0.15);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      z-index: 100;
+      opacity: 0;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      pointer-events: none;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(5px);
+    }
   </style>
 </head>
 <body>
+  <header>
+    <div class="brand">
+      <span style="font-size: 18px;">📱</span>
+      <strong style="font-size: 14px; color: #f1f5f9;">Chrome 实时触控</strong>
+    </div>
+    <div id="statusBadge" class="status-badge">
+      <span class="status-dot"></span>
+      <span id="statusText">连接中...</span>
+    </div>
+  </header>
 
-  <div class="header">
-    <h1>📱 手机滑动验证面板</h1>
-    <p>拖动滑块使标靶对准缺口或回正</p>
+  <div class="viewport-container" id="viewportContainer">
+    <div class="instructions-bar">
+      <span>👆</span>
+      <span>手指直接在画面上按住滑块拖拽即可</span>
+    </div>
+    <canvas id="screencast"></canvas>
+    <div id="touchCursor" class="touch-cursor"></div>
   </div>
 
-  <div class="card">
-    <div class="tabs">
-      <button id="tab-jigsaw" class="tab-btn active" onclick="switchMode('jigsaw')">🧩 拼图从左到右平移</button>
-      <button id="tab-rotation" class="tab-btn" onclick="switchMode('rotation')">🔄 旋转回正模式</button>
-    </div>
-
-    <!-- Jigsaw Mode -->
-    <div id="jigsaw-view" class="jigsaw-container">
-      <img id="jigsaw-img" src="" alt="Captcha Image">
-      <div id="target-cursor" class="target-cursor"></div>
-      <div id="target-box" class="target-box">对齐处</div>
-    </div>
-
-    <!-- Rotation Mode -->
-    <div id="rotation-view" class="rotation-container">
-      <img id="rotation-img" src="" alt="Captcha Rotation Image">
-      <div class="guide-v"></div>
-      <div class="guide-h"></div>
-    </div>
-
-    <div class="live-stats">
-      <div>
-        <span class="stat-label">滑动比例: </span>
-        <span id="percent-val" class="stat-value">50.0%</span>
-      </div>
-      <div>
-        <span id="mode-stat-label" class="stat-label">横向位置: </span>
-        <span id="mode-stat-val" class="stat-value">50%</span>
-      </div>
-    </div>
-
-    <div class="slider-wrap">
-      <input type="range" id="slider" min="0" max="100" step="0.5" value="50">
-    </div>
-
-    <div class="fine-tune-row">
-      <button class="btn-tune" onclick="adjustSlider(-5)">-5%</button>
-      <button class="btn-tune" onclick="adjustSlider(-1)">-1%</button>
-      <button class="btn-tune" onclick="adjustSlider(1)">+1%</button>
-      <button class="btn-tune" onclick="adjustSlider(5)">+5%</button>
-    </div>
-
-    <button id="submit-btn" class="btn-submit" onclick="submitSlide()">
-      <span>🚀 确认提交滑动 (50.0%)</span>
+  <footer>
+    <button class="btn btn-secondary" id="btnRefresh">
+      <span>🔄</span> 刷新换一张
     </button>
+    <button class="btn btn-primary" id="btnCheck">
+      <span>✅</span> 检查验证状态
+    </button>
+  </footer>
 
-    <div id="status-msg"></div>
-
-    <button class="btn-refresh" onclick="refreshCaptcha()">🔄 刷新换一张验证码</button>
-  </div>
+  <div id="toast" class="toast"></div>
 
   <script>
-    const slider = document.getElementById('slider');
-    const jigsawView = document.getElementById('jigsaw-view');
-    const rotationView = document.getElementById('rotation-view');
-    const jigsawImg = document.getElementById('jigsaw-img');
-    const rotationImg = document.getElementById('rotation-img');
-    const targetCursor = document.getElementById('target-cursor');
-    const targetBox = document.getElementById('target-box');
-    const percentVal = document.getElementById('percent-val');
-    const modeStatLabel = document.getElementById('mode-stat-label');
-    const modeStatVal = document.getElementById('mode-stat-val');
-    const submitBtn = document.getElementById('submit-btn');
-    const statusMsg = document.getElementById('status-msg');
+    const canvas = document.getElementById('screencast');
+    const ctx = canvas.getContext('2d');
+    const statusBadge = document.getElementById('statusBadge');
+    const statusText = document.getElementById('statusText');
+    const touchCursor = document.getElementById('touchCursor');
+    const btnRefresh = document.getElementById('btnRefresh');
+    const btnCheck = document.getElementById('btnCheck');
+    const toast = document.getElementById('toast');
 
-    let currentMode = 'jigsaw';
-    let currentPercent = 50;
+    let ws = null;
+    let imgWidth = 1280;
+    let imgHeight = 800;
+    let isTouching = false;
+    let frameImage = new Image();
 
-    function switchMode(mode) {
-      currentMode = mode;
-      document.getElementById('tab-jigsaw').classList.toggle('active', mode === 'jigsaw');
-      document.getElementById('tab-rotation').classList.toggle('active', mode === 'rotation');
-      
-      if (mode === 'jigsaw') {
-        jigsawView.style.display = 'flex';
-        rotationView.style.display = 'none';
-        modeStatLabel.innerText = '横向位置: ';
-      } else {
-        jigsawView.style.display = 'none';
-        rotationView.style.display = 'flex';
-        modeStatLabel.innerText = '旋转角度: ';
+    frameImage.onload = () => {
+      if (canvas.width !== frameImage.width || canvas.height !== frameImage.height) {
+        canvas.width = frameImage.width;
+        canvas.height = frameImage.height;
+        imgWidth = frameImage.width;
+        imgHeight = frameImage.height;
       }
-      updateView(currentPercent);
+      ctx.drawImage(frameImage, 0, 0);
+    };
+
+    function showToast(msg, duration = 2000) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), duration);
     }
 
-    function updateView(percent) {
-      currentPercent = Math.max(0, Math.min(100, Number(percent)));
-      percentVal.innerText = currentPercent.toFixed(1) + '%';
-      submitBtn.querySelector('span').innerText = \`🚀 确认提交滑动 (\${currentPercent.toFixed(1)}%)\`;
+    function connectWebSocket() {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = protocol + '//' + location.host + '/stream';
 
-      if (currentMode === 'jigsaw') {
-        targetCursor.style.left = currentPercent + '%';
-        targetBox.style.left = currentPercent + '%';
-        modeStatVal.innerText = currentPercent.toFixed(1) + '%';
-      } else {
-        const angle = (currentPercent * 3.6).toFixed(1);
-        rotationImg.style.transform = \`rotate(\${angle}deg)\`;
-        modeStatVal.innerText = angle + '°';
-      }
-    }
+      ws = new WebSocket(wsUrl);
 
-    slider.addEventListener('input', (e) => {
-      updateView(e.target.value);
-    });
+      ws.onopen = () => {
+        statusBadge.classList.remove('offline');
+        statusText.textContent = '实时 30FPS';
+      };
 
-    // Touch directly on jigsaw image to jump to position
-    jigsawView.addEventListener('pointerdown', (e) => {
-      const rect = jigsawView.getBoundingClientRect();
-      const clickX = e.clientX - rect.left;
-      const pct = Math.max(0, Math.min(100, (clickX / rect.width) * 100));
-      slider.value = pct;
-      updateView(pct);
-    });
-
-    function adjustSlider(delta) {
-      const newPercent = Math.max(0, Math.min(100, currentPercent + delta));
-      slider.value = newPercent;
-      updateView(newPercent);
-    }
-
-    async function loadState() {
-      statusMsg.innerHTML = '<span class="msg-info">正在获取验证码...</span>';
-      try {
-        const res = await fetch('/api/captcha-state');
-        const data = await res.json();
-        if (data.active && data.imageBase64) {
-          const imgSrc = 'data:image/png;base64,' + data.imageBase64;
-          jigsawImg.src = imgSrc;
-          rotationImg.src = imgSrc;
-          slider.value = data.lastPercent || 50;
-          updateView(slider.value);
-          statusMsg.innerHTML = '';
-        } else {
-          statusMsg.innerHTML = '<span class="msg-info">未检测到验证码，请在飞书发送 /start</span>';
-        }
-      } catch (err) {
-        statusMsg.innerHTML = '<span class="msg-error">加载失败: ' + err.message + '</span>';
-      }
-    }
-
-    async function submitSlide() {
-      submitBtn.disabled = true;
-      submitBtn.innerHTML = '<div class="loading-spinner"></div> 正在电脑端模拟真人滑动...';
-      statusMsg.innerHTML = '<span class="msg-info">正在同步滑动 (' + currentPercent.toFixed(1) + '%)...</span>';
-
-      try {
-        const res = await fetch('/api/submit-slide', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ percent: currentPercent })
-        });
-        const result = await res.json();
-
-        if (result.success) {
-          statusMsg.innerHTML = '<span class="msg-success">' + result.message + '</span>';
-          submitBtn.innerHTML = '<span>🎉 验证已通过！</span>';
-          submitBtn.style.background = '#22c55e';
-        } else {
-          statusMsg.innerHTML = '<span class="msg-error">' + result.message + '</span>';
-          submitBtn.disabled = false;
-          submitBtn.innerHTML = '<span>🚀 再次提交滑动</span>';
-          if (result.newImageBase64) {
-            const newSrc = 'data:image/png;base64,' + result.newImageBase64;
-            jigsawImg.src = newSrc;
-            rotationImg.src = newSrc;
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'frame') {
+            frameImage.src = 'data:image/jpeg;base64,' + msg.data;
+          } else if (msg.type === 'toast') {
+            showToast(msg.message);
+          } else if (msg.type === 'status') {
+            showToast(msg.message, 3000);
           }
-        }
-      } catch (err) {
-        statusMsg.innerHTML = '<span class="msg-error">提交出错: ' + err.message + '</span>';
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = '<span>🚀 重试提交</span>';
-      }
+        } catch (e) {}
+      };
+
+      ws.onclose = () => {
+        statusBadge.classList.add('offline');
+        statusText.textContent = '已断开 (重连中)';
+        setTimeout(connectWebSocket, 2000);
+      };
+
+      ws.onerror = () => {
+        statusBadge.classList.add('offline');
+        statusText.textContent = '连接异常';
+      };
     }
 
-    async function refreshCaptcha() {
-      statusMsg.innerHTML = '<span class="msg-info">正在刷新验证码...</span>';
-      try {
-        const res = await fetch('/api/refresh-captcha', { method: 'POST' });
-        const data = await res.json();
-        if (data.success && data.imageBase64) {
-          const newSrc = 'data:image/png;base64,' + data.imageBase64;
-          jigsawImg.src = newSrc;
-          rotationImg.src = newSrc;
-          statusMsg.innerHTML = '<span class="msg-success">已刷新验证码图片</span>';
-        } else {
-          statusMsg.innerHTML = '<span class="msg-error">' + (data.message || '刷新失败') + '</span>';
-        }
-      } catch (err) {
-        statusMsg.innerHTML = '<span class="msg-error">刷新失败: ' + err.message + '</span>';
-      }
+    // Coordinate mapping from screen touch to Chrome page pixel coordinates
+    function getPageCoords(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = imgWidth / rect.width;
+      const scaleY = imgHeight / rect.height;
+      return {
+        x: Math.round((clientX - rect.left) * scaleX),
+        y: Math.round((clientY - rect.top) * scaleY),
+      };
     }
 
-    // Auto-load on page ready
-    loadState();
+    function sendInput(event, clientX, clientY, buttons = 1) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const coords = getPageCoords(clientX, clientY);
+      ws.send(JSON.stringify({
+        type: 'input',
+        event: event,
+        x: coords.x,
+        y: coords.y,
+        buttons: buttons,
+      }));
+    }
+
+    // Touch Event Handlers
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      isTouching = true;
+      touchCursor.style.display = 'block';
+      touchCursor.style.left = touch.clientX + 'px';
+      touchCursor.style.top = touch.clientY + 'px';
+      sendInput('mousedown', touch.clientX, touch.clientY, 1);
+    }, { passive: false });
+
+    window.addEventListener('touchmove', (e) => {
+      if (!isTouching) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      touchCursor.style.left = touch.clientX + 'px';
+      touchCursor.style.top = touch.clientY + 'px';
+      sendInput('mousemove', touch.clientX, touch.clientY, 1);
+    }, { passive: false });
+
+    window.addEventListener('touchend', (e) => {
+      if (!isTouching) return;
+      e.preventDefault();
+      isTouching = false;
+      touchCursor.style.display = 'none';
+      const touch = e.changedTouches[0];
+      sendInput('mouseup', touch.clientX, touch.clientY, 0);
+    }, { passive: false });
+
+    window.addEventListener('touchcancel', () => {
+      if (isTouching) {
+        isTouching = false;
+        touchCursor.style.display = 'none';
+        sendInput('mouseup', 0, 0, 0);
+      }
+    });
+
+    // Mouse Event Handlers for Desktop Testing
+    canvas.addEventListener('mousedown', (e) => {
+      isTouching = true;
+      sendInput('mousedown', e.clientX, e.clientY, 1);
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isTouching) return;
+      sendInput('mousemove', e.clientX, e.clientY, 1);
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (!isTouching) return;
+      isTouching = false;
+      sendInput('mouseup', e.clientX, e.clientY, 0);
+    });
+
+    btnRefresh.addEventListener('click', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'refresh' }));
+        showToast('正在请求刷新验证码...');
+      }
+    });
+
+    btnCheck.addEventListener('click', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'check' }));
+      }
+    });
+
+    connectWebSocket();
   </script>
 </body>
 </html>`;
-
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(html);
   }
