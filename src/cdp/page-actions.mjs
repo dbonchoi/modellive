@@ -393,18 +393,19 @@ export class PageActions {
       }
 
       logger.info('Capturing security verification captcha modal screenshot...');
-      let buffer = await targetElement.screenshot({ type: 'png' }).catch(async () => {
+      const rawBuffer = await targetElement.screenshot({ type: 'png' }).catch(async () => {
         return await page.screenshot({ fullPage: false, type: 'png' });
       });
 
+      let buffer = rawBuffer;
       if (buffer) {
         buffer = await this.addVisualRuler(page, buffer);
       }
 
-      return { visible: true, buffer };
+      return { visible: true, buffer, rawBuffer };
     } catch (err) {
       logger.warn(`Error checking captcha modal: ${err.message}`);
-      return { visible: false, buffer: null };
+      return { visible: false, buffer: null, rawBuffer: null };
     }
   }
 
@@ -624,41 +625,23 @@ export class PageActions {
         return { success: false, message: '无法获取滑块按钮坐标。' };
       }
 
-      // Measure real DOM layout geometry of puzzle image vs slider track
-      const geom = await page.evaluate(() => {
-        const img = document.querySelector('.nc-container img, .nc_scale img, .antd5-modal-content img, div[role="dialog"] img, canvas');
-        const track = document.querySelector('.scale_text, .nc_scale, [class*="slide_track"], [class*="slider-track"]');
-        const btn = document.querySelector('#nc_1_n1z, [id$="_n1z"], .btn_slide, .nc_iconfont.btn_slide');
+      let trackWidth = 260; // standard fallback
+      if (sliderTrack) {
+        const trackBox = await sliderTrack.boundingBox();
+        if (trackBox && trackBox.width > btnBox.width) {
+          trackWidth = trackBox.width - btnBox.width;
+        }
+      }
 
-        const imgBox = img ? img.getBoundingClientRect() : null;
-        const trackBox = track ? track.getBoundingClientRect() : null;
-        const btnBox = btn ? btn.getBoundingClientRect() : null;
-
-        return {
-          imgWidth: imgBox ? imgBox.width : 280,
-          trackWidth: trackBox ? trackBox.width : 260,
-          btnWidth: btnBox ? btnBox.width : 40,
-        };
-      }).catch(() => ({ imgWidth: 280, trackWidth: 260, btnWidth: 40 }));
-
-      const maxTrackDistance = Math.max(50, (geom.trackWidth || 260) - (geom.btnWidth || 40));
-      const imgWidth = geom.imgWidth || 280;
-
-      // Initial piece resting center is at ~8% of image width (around 22px)
-      // Target notch position is at (targetPercent / 100) * imgWidth
-      // Needed movement = targetNotchX - initialPieceX
-      const initialPieceX = Math.round(imgWidth * 0.08);
-      const targetNotchX = Math.round(imgWidth * (Math.max(0, Math.min(100, targetPercent)) / 100));
-      const requiredMove = targetNotchX - initialPieceX;
-
-      let dragDistance = Math.round(requiredMove);
-      dragDistance = Math.max(0, Math.min(maxTrackDistance, dragDistance));
+      // Linear 1:1 mapping: 0% = start of track, 100% = end of track
+      const ratio = Math.max(0, Math.min(100, targetPercent)) / 100;
+      const dragDistance = Math.round(trackWidth * ratio);
 
       const startX = btnBox.x + btnBox.width / 2;
       const startY = btnBox.y + btnBox.height / 2;
       const targetX = startX + dragDistance;
 
-      logger.info(`[Captcha Drag] Target=${targetPercent}%, ImgWidth=${imgWidth.toFixed(0)}px, Distance=${dragDistance}px (TrackMax=${maxTrackDistance}px), Start=(${startX.toFixed(1)}, ${startY.toFixed(1)}) -> Target=(${targetX.toFixed(1)}, ${startY.toFixed(1)})`);
+      logger.info(`[Captcha Drag] Target=${targetPercent}%, Distance=${dragDistance}px (TrackWidth=${trackWidth.toFixed(0)}px), Start=(${startX.toFixed(1)}, ${startY.toFixed(1)}) -> Target=(${targetX.toFixed(1)}, ${startY.toFixed(1)})`);
 
       // 1. Move to handle center
       await page.mouse.move(startX, startY);

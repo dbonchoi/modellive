@@ -137,16 +137,17 @@ export class H5Server {
       const page = await this.browserManager.getPrimaryPage();
       const cap = await PageActions.checkAndCaptureCaptcha(page);
 
-      if (cap.visible && cap.buffer) {
-        this.currentCaptchaBuffer = cap.buffer;
-        base64 = cap.buffer.toString('base64');
-        active = true;
-      } else if (this.currentCaptchaBuffer) {
-        base64 = this.currentCaptchaBuffer.toString('base64');
+      const buf = cap.rawBuffer || cap.buffer || this.currentCaptchaBuffer;
+      if (buf) {
+        this.currentCaptchaBuffer = buf;
+        base64 = buf.toString('base64');
         active = true;
       }
 
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+      });
       res.end(JSON.stringify({
         active,
         imageBase64: base64,
@@ -221,12 +222,16 @@ export class H5Server {
     try {
       const page = await this.browserManager.getPrimaryPage();
       const cap = await PageActions.refreshCaptcha(page);
-      if (cap.buffer) {
-        this.currentCaptchaBuffer = cap.buffer;
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+      const buf = cap.rawBuffer || cap.buffer;
+      if (buf) {
+        this.currentCaptchaBuffer = buf;
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+        });
         res.end(JSON.stringify({
           success: true,
-          imageBase64: cap.buffer.toString('base64'),
+          imageBase64: buf.toString('base64'),
         }));
       } else {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -245,6 +250,9 @@ export class H5Server {
    * Serve the responsive mobile-first H5 application.
    */
   handleServeH5(req, res) {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     const html = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
