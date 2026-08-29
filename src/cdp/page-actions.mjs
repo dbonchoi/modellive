@@ -1041,55 +1041,78 @@ export class PageActions {
       await statusBtn.click({ timeout: 2000 }).catch(() => {});
       await this.sleep(800);
 
-      // 3. Find the "查看实例" dropdown item (poll for up to 3.5s)
-      const viewInstanceSelectors = [
-        'div:has-text("查看实例")',
-        'span:has-text("查看实例")',
-        'li:has-text("查看实例")',
-        'a:has-text("查看实例")',
-        '.ant-dropdown-menu-item:has-text("查看实例")',
-        '.ant-dropdown :has-text("查看实例")',
-        '.ant-popover :has-text("查看实例")',
-        '[class*="menu"]:has-text("查看实例")',
-        '[class*="dropdown"]:has-text("查看实例")',
-      ];
-
-      let viewItem = null;
+      // 3. Find the exact "查看实例" dropdown item (the 1st item in dropdown menu)
+      let viewItemHandle = null;
       const startWait = Date.now();
-      while (Date.now() - startWait < 3500) {
-        for (const sel of viewInstanceSelectors) {
-          try {
-            const els = await page.$$(sel);
-            for (const el of els) {
-              if (await el.isVisible()) {
-                viewItem = el;
-                break;
+      while (Date.now() - startWait < 4000) {
+        viewItemHandle = await page.evaluateHandle(() => {
+          // Look for all dropdown menu items across Antd components
+          const allItems = Array.from(document.querySelectorAll('.ant-dropdown-menu-item, li[role="menuitem"], .ant-dropdown li, .ant-popover div[class*="item"], div[class*="menu-item"], div[class*="action-item"]'));
+          
+          for (const item of allItems) {
+            const txt = (item.innerText || item.textContent || '').trim();
+            // Strictly require "查看实例" and exclude "停止" / "关闭"
+            if (txt.includes('查看实例') && !txt.includes('停止') && !txt.includes('关闭')) {
+              return item;
+            }
+          }
+
+          // Fallback: If in visible dropdown menu, pick the 1st child item if not "停止"
+          const visibleMenu = document.querySelector('.ant-dropdown:not(.ant-dropdown-hidden) ul, .ant-dropdown:not([style*="display: none"]) ul, .ant-popover:not(.ant-popover-hidden)');
+          if (visibleMenu) {
+            const firstChild = visibleMenu.querySelector('li:first-child, .ant-dropdown-menu-item:first-child, div:first-child');
+            if (firstChild) {
+              const txt = (firstChild.innerText || firstChild.textContent || '').trim();
+              if (!txt.includes('停止') && !txt.includes('关闭')) {
+                return firstChild;
               }
             }
-            if (viewItem) break;
-          } catch {}
+          }
+          return null;
+        }).catch(() => null);
+
+        if (viewItemHandle) {
+          const el = viewItemHandle.asElement();
+          if (el && (await el.isVisible())) {
+            break;
+          }
         }
-        if (viewItem) break;
-        // If not appeared, re-hover
+
+        // Re-hover if not yet visible
         if (box) {
           await page.mouse.move(centerX, centerY);
         }
         await this.sleep(400);
       }
 
+      const viewItem = viewItemHandle ? viewItemHandle.asElement() : null;
+
       if (!viewItem) {
-        logger.warn('Could not find 【查看实例】 in dropdown menu.');
+        logger.warn('Could not locate 【查看实例】 item in dropdown menu.');
         return {
           success: false,
           needsLogin: false,
           targetUrl: page.url(),
           buffer: null,
-          message: '未能唤出或找到【查看实例】菜单项，请检查电脑端页面是否处于前台。',
+          message: '未能定位到下拉菜单中的【查看实例】按钮。',
         };
       }
 
-      // 4. Hover & Click "查看实例" and listen for newly opened tab
-      logger.info('Found 【查看实例】 menu item, clicking to open PAI-DSW tab...');
+      // Safety check text
+      const targetText = await viewItem.innerText().catch(() => '');
+      if (targetText.includes('停止') || targetText.includes('关闭')) {
+        logger.error(`CRITICAL: Selected element contains dangerous text ("${targetText}"). Aborting click.`);
+        return {
+          success: false,
+          needsLogin: false,
+          targetUrl: page.url(),
+          buffer: null,
+          message: '安全拦截：检测到所选项目为停止实例，已自动终止操作防止关机。',
+        };
+      }
+
+      // 4. Hover & Click "查看实例" (1st item) and listen for newly opened tab
+      logger.info(`Found 1st menu item ("${targetText.trim() || '查看实例'}"), clicking to open PAI-DSW tab...`);
       const context = page.context();
       let targetPage = null;
 
