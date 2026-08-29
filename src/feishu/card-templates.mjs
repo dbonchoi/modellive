@@ -395,8 +395,101 @@ export class CardTemplates {
           tag: 'div',
           text: {
             tag: 'lark_md',
-            content: `**可用指令列表**：\n\n• \`/status\` 或 \`状态\`：查看所有 Notebook 实例的保活健康度\n• \`/refresh\` 或 \`保活\`：立即执行一次全量保活刷新\n• \`/start [CPU|GPU|AMD]\` 或 \`启动\`：远程连接并启动指定的实例类型（默认 CPU）\n• \`/login\` 或 \`登录\`：获取最新 ModelScope 微信登录二维码进行扫码\n• \`/cookie <cookie内容>\`：手动更新注入浏览器 Cookie\n• \`/logs\` 或 \`日志\`：获取最近运行日志\n• \`/help\` 或 \`帮助\`：查看此帮助说明`,
+            content: `**可用指令列表**：\n\n• \`/status\` 或 \`状态\`：查看所有 Notebook 实例的保活健康度\n• \`/refresh\` 或 \`保活\`：立即执行一次全量保活刷新\n• \`/start [CPU|GPU]\` 或 \`启动\`：远程连接并启动指定的实例类型\n• \`查看实例\` 或 \`/instance\`：打开顶部菜单【查看实例】(PAI-DSW/阿里云登录)\n• \`/login\` 或 \`登录\`：获取最新 ModelScope 微信/CSDN 登录二维码\n• \`/cookie <cookie内容>\`：手动更新注入浏览器 Cookie\n• \`/logs\` 或 \`日志\`：获取最近运行日志\n• \`/help\` 或 \`帮助\`：查看此帮助说明`,
           },
+        },
+      ],
+    };
+  }
+
+  /**
+   * Build Alibaba Cloud PAI-DSW Instance Detail Card (or Login Prompt Card).
+   * @param {string} imageKey
+   * @param {boolean} needsLogin
+   * @param {string} targetUrl
+   * @param {string} [customMessage]
+   */
+  static buildInstanceDetailCard(imageKey, needsLogin = false, targetUrl = '', customMessage = '') {
+    if (needsLogin) {
+      return {
+        config: { wide_screen_mode: true },
+        header: {
+          title: { tag: 'plain_text', content: '☁️ 请登录阿里云 (查看实例)' },
+          template: 'orange',
+        },
+        elements: [
+          {
+            tag: 'div',
+            text: {
+              tag: 'lark_md',
+              content: `**状态**：🟡 **需登录阿里云**\n${customMessage || '已在电脑端弹出阿里云登录页面。请使用【RAM 账号】或手机 APP 扫码登录。'}\n\n💡 登录完成后，会话将自动永久保存在本地 Profile 中。请点击下方按钮确认：`,
+            },
+          },
+          {
+            tag: 'img',
+            img_key: imageKey,
+            alt: { tag: 'plain_text', content: 'Alibaba Cloud Login Screen' },
+            mode: 'fit_horizontal',
+          },
+          { tag: 'hr' },
+          {
+            tag: 'action',
+            actions: [
+              {
+                tag: 'button',
+                text: { tag: 'plain_text', content: '✅ 我已完成阿里云登录' },
+                type: 'primary',
+                value: { action: 'confirm_aliyun_login' },
+              },
+              {
+                tag: 'button',
+                text: { tag: 'plain_text', content: '🔄 重新打开查看实例' },
+                type: 'default',
+                value: { action: 'view_instance' },
+              },
+            ],
+          },
+        ],
+      };
+    }
+
+    return {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { tag: 'plain_text', content: '🖥️ 阿里云实例管理窗口 (PAI-DSW 已打开)' },
+        template: 'blue',
+      },
+      elements: [
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: `**状态**：🟢 **阿里云已连接**\n${customMessage || '已在电脑端成功打开【查看实例】控制台窗口！您可在该窗口中使用全部高级实例功能。'}\n\n💻 PC 守护进程正在持续全天候保活中。`,
+          },
+        },
+        {
+          tag: 'img',
+          img_key: imageKey,
+          alt: { tag: 'plain_text', content: 'PAI-DSW Console Screenshot' },
+          mode: 'fit_horizontal',
+        },
+        { tag: 'hr' },
+        {
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '🔄 刷新实例详情' },
+              type: 'primary',
+              value: { action: 'view_instance' },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '📊 查看保活看板' },
+              type: 'default',
+              value: { action: 'view_status' },
+            },
+          ],
         },
       ],
     };

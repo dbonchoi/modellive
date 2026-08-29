@@ -979,6 +979,158 @@ export class PageActions {
       logger.warn(`User activity simulation minor error: ${err.message}`);
     }
   }
+
+  /**
+   * Click '实例运行中' dropdown and '查看实例' to open Alibaba Cloud PAI-DSW notebook console tab.
+   * If Alibaba Cloud login is required, captures login screen; if already active, captures DSW console.
+   * @param {import('playwright-core').Page} page
+   * @returns {Promise<{ success: boolean, needsLogin: boolean, targetUrl: string, buffer: Buffer | null, message: string }>}
+   */
+  static async openInstanceDetail(page) {
+    try {
+      logger.info('Opening Alibaba Cloud instance details via ModelScope top bar...');
+
+      // 1. Find the "实例运行中" status button
+      const statusBtnSelectors = [
+        'button:has-text("实例运行中")',
+        'div:has-text("实例运行中")',
+        'span:has-text("实例运行中")',
+        '[class*="status"]:has-text("实例运行中")',
+        '[class*="running"]:has-text("实例运行中")',
+      ];
+
+      let statusBtn = null;
+      for (const sel of statusBtnSelectors) {
+        try {
+          const el = await page.$(sel);
+          if (el && (await el.isVisible())) {
+            statusBtn = el;
+            break;
+          }
+        } catch {}
+      }
+
+      if (!statusBtn) {
+        return {
+          success: false,
+          needsLogin: false,
+          targetUrl: page.url(),
+          buffer: null,
+          message: '未在页面顶部找到【实例运行中】按钮，可能实例尚未启动。',
+        };
+      }
+
+      // 2. Click "实例运行中" to open dropdown menu
+      logger.info('Clicking 【实例运行中】 button to open dropdown menu...');
+      await page.evaluate(el => el.click(), statusBtn).catch(async () => {
+        await statusBtn.click({ timeout: 3000 });
+      });
+      await this.sleep(800);
+
+      // 3. Find the "查看实例" dropdown item
+      const viewInstanceSelectors = [
+        'div:has-text("查看实例")',
+        'span:has-text("查看实例")',
+        'li:has-text("查看实例")',
+        'a:has-text("查看实例")',
+        '[class*="menu"]:has-text("查看实例")',
+        '[class*="dropdown"]:has-text("查看实例")',
+      ];
+
+      let viewItem = null;
+      for (const sel of viewInstanceSelectors) {
+        try {
+          const el = await page.$(sel);
+          if (el && (await el.isVisible())) {
+            viewItem = el;
+            break;
+          }
+        } catch {}
+      }
+
+      if (!viewItem) {
+        return {
+          success: false,
+          needsLogin: false,
+          targetUrl: page.url(),
+          buffer: null,
+          message: '未在下拉菜单中找到【查看实例】选项。',
+        };
+      }
+
+      // 4. Click "查看实例" and listen for newly opened tab
+      logger.info('Clicking 【查看实例】 menu item...');
+      const context = page.context();
+      let targetPage = null;
+
+      const [popup] = await Promise.all([
+        context.waitForEvent('page', { timeout: 8000 }).catch(() => null),
+        page.evaluate(el => el.click(), viewItem).catch(async () => {
+          await viewItem.click({ timeout: 3000 });
+        }),
+      ]);
+
+      if (popup) {
+        targetPage = popup;
+      } else {
+        await this.sleep(2500);
+        const pages = context.pages();
+        targetPage = pages.find(p => p.url().includes('aliyun.com') || p.url().includes('dsw') || p.url().includes('pai'));
+        if (!targetPage && pages.length > 1) {
+          targetPage = pages[pages.length - 1];
+        }
+      }
+
+      if (!targetPage) {
+        targetPage = page;
+      }
+
+      await targetPage.waitForLoadState('domcontentloaded').catch(() => {});
+      await this.sleep(2500);
+
+      const targetUrl = targetPage.url();
+      logger.info(`Instance detail page loaded: ${targetUrl}`);
+
+      // Check if Alibaba Cloud login page
+      const isAliyunLogin = targetUrl.includes('signin.aliyun.com') || targetUrl.includes('login.htm') || targetUrl.includes('account.aliyun.com') || targetUrl.includes('login.taobao.com');
+
+      let buffer = null;
+      try {
+        buffer = await targetPage.screenshot({ fullPage: false, type: 'png' });
+      } catch (e) {
+        logger.warn(`Failed to capture instance detail screenshot: ${e.message}`);
+      }
+
+      if (isAliyunLogin) {
+        logger.warn('Alibaba Cloud login is required to access instance detail.');
+        return {
+          success: true,
+          needsLogin: true,
+          targetUrl,
+          buffer,
+          message: '已弹出阿里云登录页面，请使用【RAM 账号】或手机扫码完成登录。',
+        };
+      }
+
+      logger.success('Alibaba Cloud instance detail (PAI-DSW) opened successfully!');
+      return {
+        success: true,
+        needsLogin: false,
+        targetUrl,
+        buffer,
+        message: '🎉 已成功打开阿里云实例窗口 (PAI-DSW)！',
+      };
+    } catch (err) {
+      logger.error(`Error opening instance detail: ${err.message}`);
+      return {
+        success: false,
+        needsLogin: false,
+        targetUrl: page.url(),
+        buffer: null,
+        message: `查看实例异常: ${err.message}`,
+      };
+    }
+  }
 }
 
 export default PageActions;

@@ -150,6 +150,17 @@ export class MessageHandler {
         break;
       }
 
+      case '/instance':
+      case 'instance':
+      case '/dsw':
+      case 'dsw':
+      case '查看实例':
+      case '/查看实例':
+      case '实例详情': {
+        await this.handleOpenInstanceDetail(targetId);
+        break;
+      }
+
       case '/login':
       case 'login':
       case '登录':
@@ -357,6 +368,12 @@ export class MessageHandler {
         break;
       }
 
+      case 'view_instance':
+      case 'confirm_aliyun_login': {
+        await this.handleOpenInstanceDetail(senderId);
+        break;
+      }
+
       default:
         logger.warn(`Unknown card action: ${action}`);
         break;
@@ -465,6 +482,45 @@ export class MessageHandler {
       await this.notifier.sendCard(
         CardTemplates.buildResultCard('登录流异常', err.message, false),
         senderId
+      );
+    }
+  }
+
+  /**
+   * Handle opening Alibaba Cloud PAI-DSW instance detail or login prompt.
+   * @param {string} targetId
+   */
+  async handleOpenInstanceDetail(targetId) {
+    try {
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard('正在打开查看实例', '正在电脑端点击顶部【实例运行中】并进入【查看实例】窗口...', true),
+        targetId
+      );
+
+      const page = await this.browserManager.getPrimaryPage();
+      const res = await PageActions.openInstanceDetail(page);
+
+      if (res.buffer) {
+        const imageKey = await this.notifier.uploadImage(res.buffer);
+        if (imageKey) {
+          const card = CardTemplates.buildInstanceDetailCard(imageKey, res.needsLogin, res.targetUrl, res.message);
+          await this.notifier.sendCard(card, targetId);
+          return;
+        }
+      }
+
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard(
+          res.needsLogin ? '需登录阿里云' : (res.success ? '实例管理窗口已打开' : '查看实例失败'),
+          res.message,
+          res.success && !res.needsLogin
+        ),
+        targetId
+      );
+    } catch (err) {
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard('查看实例异常', err.message, false),
+        targetId
       );
     }
   }
