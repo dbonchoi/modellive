@@ -414,7 +414,7 @@ export class CardTemplates {
       return {
         config: { wide_screen_mode: true },
         header: {
-          title: { tag: 'plain_text', content: '☁️ 请登录阿里云 (查看实例)' },
+          title: { tag: 'plain_text', content: '☁️ 阿里云 RAM 登录 (查看实例)' },
           template: 'orange',
         },
         elements: [
@@ -422,13 +422,13 @@ export class CardTemplates {
             tag: 'div',
             text: {
               tag: 'lark_md',
-              content: `**状态**：🟡 **需登录阿里云**\n${customMessage || '已在电脑端弹出阿里云登录页面。请使用【RAM 账号】或手机 APP 扫码登录。'}\n\n💡 登录完成后，会话将自动永久保存在本地 Profile 中。请点击下方按钮确认：`,
+              content: `**状态**：🟡 **需登录阿里云 RAM 子账号**\n${customMessage || '已在电脑端自动切换至 RAM 登录页面。'}\n\n👉 **请直接在飞书发送账号密码进行登录**：\n• 一键登录：\`/ram <子账号> <密码>\`\n• 分步发送：\`/ram user <子账号>\` ➔ \`/ram pass <密码>\`\n• 若有验证码：\`/ram code <验证码>\``,
             },
           },
           {
             tag: 'img',
             img_key: imageKey,
-            alt: { tag: 'plain_text', content: 'Alibaba Cloud Login Screen' },
+            alt: { tag: 'plain_text', content: 'Alibaba Cloud RAM Login Screen' },
             mode: 'fit_horizontal',
           },
           { tag: 'hr' },
@@ -437,15 +437,15 @@ export class CardTemplates {
             actions: [
               {
                 tag: 'button',
-                text: { tag: 'plain_text', content: '✅ 我已完成阿里云登录' },
-                type: 'primary',
-                value: { action: 'confirm_aliyun_login' },
+                text: { tag: 'plain_text', content: '🔄 刷新登录页面' },
+                type: 'default',
+                value: { action: 'ram_refresh' },
               },
               {
                 tag: 'button',
-                text: { tag: 'plain_text', content: '🔄 重新打开查看实例' },
-                type: 'default',
-                value: { action: 'view_instance' },
+                text: { tag: 'plain_text', content: '✅ 我已在电脑端完成登录' },
+                type: 'primary',
+                value: { action: 'confirm_aliyun_login' },
               },
             ],
           },
@@ -488,6 +488,56 @@ export class CardTemplates {
               text: { tag: 'plain_text', content: '📊 查看保活看板' },
               type: 'default',
               value: { action: 'view_status' },
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  /**
+   * Build RAM Login Step Status Card with screenshot & step guidance.
+   * @param {string} imageKey
+   * @param {string} title
+   * @param {string} message
+   * @param {'blue' | 'orange' | 'green' | 'red'} [color='blue']
+   */
+  static buildRamLoginStatusCard(imageKey, title, message, color = 'blue') {
+    return {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { tag: 'plain_text', content: `☁️ 阿里云 RAM: ${title}` },
+        template: color,
+      },
+      elements: [
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: `${message}\n\n**可用指令**：\n• 一键登录：\`/ram <子账号> <密码>\`\n• 输入账号：\`/ram user <子账号>\`\n• 输入密码：\`/ram pass <密码>\`\n• 输入验证码：\`/ram code <验证码>\``,
+          },
+        },
+        {
+          tag: 'img',
+          img_key: imageKey,
+          alt: { tag: 'plain_text', content: 'RAM Login Screenshot' },
+          mode: 'fit_horizontal',
+        },
+        { tag: 'hr' },
+        {
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '🔄 刷新登录状态' },
+              type: 'default',
+              value: { action: 'ram_refresh' },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '✅ 我已在电脑完成登录' },
+              type: 'primary',
+              value: { action: 'confirm_aliyun_login' },
             },
           ],
         },

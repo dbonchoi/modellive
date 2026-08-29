@@ -1155,13 +1155,19 @@ export class PageActions {
       }
 
       if (isAliyunLogin) {
-        logger.warn('Alibaba Cloud login is required to access instance detail.');
+        logger.info('Alibaba Cloud login page detected. Automatically clicking 【RAM登录】...');
+        const ramRes = await this.switchToRamLogin(targetPage);
         return {
           success: true,
           needsLogin: true,
+          isRamForm: ramRes.isRamForm,
           targetUrl,
-          buffer,
-          message: '已弹出阿里云登录页面，请使用【RAM 账号】或手机扫码完成登录。',
+          buffer: ramRes.buffer || buffer,
+          message: '已自动切换至【阿里云 RAM 子账号登录】页面！\n\n' +
+                   '👉 请在飞书发送子账号与密码进行登录：\n' +
+                   '• 快捷方式：`/ram <子账号> <密码>`\n' +
+                   '• 或分步方式：`/ram user <子账号>` ➔ `/ram pass <密码>`\n' +
+                   '• 若有验证码：`/ram code <验证码>`',
         };
       }
 
@@ -1183,6 +1189,353 @@ export class PageActions {
         message: `查看实例异常: ${err.message}`,
       };
     }
+  }
+
+  /**
+   * Switch Alibaba Cloud login page to RAM (Sub-account) mode.
+   * @param {import('playwright-core').Page} page
+   * @returns {Promise<{ success: boolean, isRamForm: boolean, buffer: Buffer | null, message?: string }>}
+   */
+  static async switchToRamLogin(page) {
+    try {
+      logger.info('Checking/Switching to Alibaba Cloud RAM login form...');
+      // 1. Check if already on RAM login form
+      const userInput = await page.$('#user_principal_name, input[name="user_principal_name"], input[placeholder*="企业别名"], input[placeholder*="账号"]');
+      if (userInput && (await userInput.isVisible())) {
+        const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
+        return { success: true, isRamForm: true, buffer };
+      }
+
+      // 2. Look for "RAM登录 >" link / button
+      const ramSelectors = [
+        'a:has-text("RAM登录")',
+        'span:has-text("RAM登录")',
+        'div:has-text("RAM登录")',
+        '[class*="ram"]',
+        'a[href*="ram"]',
+      ];
+
+      for (const sel of ramSelectors) {
+        try {
+          const el = await page.$(sel);
+          if (el && (await el.isVisible())) {
+            logger.info(`Found RAM login entry (${sel}), clicking...`);
+            await el.click({ timeout: 3000 });
+            await this.sleep(2500);
+            break;
+          }
+        } catch {}
+      }
+
+      const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
+      const isRam = !!(await page.$('#user_principal_name, input[name="user_principal_name"], input[placeholder*="账号"], input[type="text"]').catch(() => null));
+
+      return { success: true, isRamForm: isRam, buffer };
+    } catch (err) {
+      logger.warn(`Failed to switch to RAM login: ${err.message}`);
+      const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
+      return { success: false, isRamForm: false, buffer, message: err.message };
+    }
+  }
+
+  /**
+   * Step 1: Submit RAM sub-account username and click '下一步'.
+   * @param {import('playwright-core').Page} page
+   * @param {string} username
+   * @returns {Promise<{ success: boolean, buffer: Buffer | null, hasPasswordPrompt: boolean, message: string }>}
+   */
+  static async submitRamUsername(page, username) {
+    try {
+      logger.info(`[RAM Login] Entering sub-account username: "${username}"...`);
+      await this.switchToRamLogin(page);
+
+      const userInputSelectors = [
+        '#user_principal_name',
+        'input[name="user_principal_name"]',
+        'input[placeholder*="企业别名"]',
+        'input[placeholder*="账号"]',
+        'input[placeholder*="用户名"]',
+        '#fm-login-id',
+        'input[type="text"]',
+      ];
+
+      let inputEl = null;
+      for (const sel of userInputSelectors) {
+        try {
+          const el = await page.$(sel);
+          if (el && (await el.isVisible())) {
+            inputEl = el;
+            break;
+          }
+        } catch {}
+      }
+
+      if (!inputEl) {
+        const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
+        return { success: false, buffer, hasPasswordPrompt: false, message: '未能找到 RAM 子账号输入框，请确认处于 RAM 登录页。' };
+      }
+
+      // Focus and fill username
+      await inputEl.click({ timeout: 2000 });
+      await inputEl.fill('');
+      await inputEl.type(username.trim(), { delay: 60 });
+      await this.sleep(400);
+
+      // Find "下一步" button
+      const nextBtnSelectors = [
+        'button:has-text("下一步")',
+        'input[value="下一步"]',
+        'button[type="submit"]',
+        '#btn-submit',
+        'div:has-text("下一步")',
+      ];
+
+      for (const sel of nextBtnSelectors) {
+        try {
+          const btn = await page.$(sel);
+          if (btn && (await btn.isVisible())) {
+            logger.info(`Clicking RAM next button (${sel})...`);
+            await btn.click({ timeout: 3000 });
+            break;
+          }
+        } catch {}
+      }
+
+      await this.sleep(2500);
+
+      const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
+      const passwordInput = await page.$('#password_ims, input[name="password_ims"], input[type="password"]').catch(() => null);
+      const hasPasswordPrompt = !!passwordInput && (await passwordInput.isVisible().catch(() => false));
+
+      return {
+        success: true,
+        buffer,
+        hasPasswordPrompt,
+        message: hasPasswordPrompt
+          ? `✅ 子账号【${username}】已输入成功！已进入密码输入步骤。\n👉 请发送：\`/ram pass <密码>\``
+          : `子账号已提交，正在等待下一步响应。`,
+      };
+    } catch (err) {
+      logger.error(`Error submitting RAM username: ${err.message}`);
+      const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
+      return { success: false, buffer, hasPasswordPrompt: false, message: `输入子账号异常: ${err.message}` };
+    }
+  }
+
+  /**
+   * Step 2: Submit RAM password and click '登录'.
+   * @param {import('playwright-core').Page} page
+   * @param {string} password
+   * @returns {Promise<{ success: boolean, loggedIn: boolean, needsCode: boolean, needsSlider: boolean, buffer: Buffer | null, message: string }>}
+   */
+  static async submitRamPassword(page, password) {
+    try {
+      logger.info('[RAM Login] Entering sub-account password...');
+
+      const passInputSelectors = [
+        '#password_ims',
+        'input[name="password_ims"]',
+        'input[type="password"]',
+        'input[placeholder*="密码"]',
+        '#fm-login-password',
+      ];
+
+      let passEl = null;
+      for (const sel of passInputSelectors) {
+        try {
+          const el = await page.$(sel);
+          if (el && (await el.isVisible())) {
+            passEl = el;
+            break;
+          }
+        } catch {}
+      }
+
+      if (!passEl) {
+        const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
+        return {
+          success: false,
+          loggedIn: false,
+          needsCode: false,
+          needsSlider: false,
+          buffer,
+          message: '未能找到密码输入框，请先发送 `/ram user <子账号>` 或检查页面状态。',
+        };
+      }
+
+      await passEl.click({ timeout: 2000 });
+      await passEl.fill('');
+      await passEl.type(password.trim(), { delay: 40 });
+      await this.sleep(400);
+
+      // Find "登录" button
+      const loginBtnSelectors = [
+        'button:has-text("登录")',
+        'input[value="登录"]',
+        'button[type="submit"]',
+        '#btn-submit',
+        'div:has-text("登录")',
+      ];
+
+      for (const sel of loginBtnSelectors) {
+        try {
+          const btn = await page.$(sel);
+          if (btn && (await btn.isVisible())) {
+            logger.info(`Clicking RAM submit login button (${sel})...`);
+            await btn.click({ timeout: 3000 });
+            break;
+          }
+        } catch {}
+      }
+
+      await this.sleep(3500);
+
+      const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
+      const url = page.url();
+
+      // Check if logged in (redirected to DSW console or aliyun home)
+      const isSuccess = url.includes('dsw') || url.includes('console.aliyun.com') || url.includes('pai') || (!url.includes('signin.aliyun.com') && !url.includes('login.htm'));
+
+      // Check if SMS / MFA verification code is needed
+      const codeInput = await page.$('input[placeholder*="验证码"], input[placeholder*="动态口令"], input[placeholder*="MFA"], input[name*="code"], input[name*="verify"]').catch(() => null);
+      const needsCode = !!codeInput && (await codeInput.isVisible().catch(() => false));
+
+      // Check if sliding captcha is present
+      const cap = await this.checkAndCaptureCaptcha(page);
+      const needsSlider = cap.visible;
+
+      let message = '登录已提交。';
+      if (isSuccess) {
+        message = '🎉 阿里云 RAM 子账号登录成功！PAI-DSW 实例窗口已就绪，守护进程已持久化记住会话！';
+      } else if (needsCode) {
+        message = '🟡 检测到需要二次验证码（短信 / MFA 动态口令）！\n👉 请发送：\`/ram code <验证码>\`';
+      } else if (needsSlider) {
+        message = '🟡 检测到需要滑块安全验证！\n👉 请在飞书发送滑动比例（如 `/slide 45`）或在 H5 面板微调。';
+      }
+
+      return {
+        success: true,
+        loggedIn: isSuccess,
+        needsCode,
+        needsSlider,
+        buffer: needsSlider ? (cap.buffer || buffer) : buffer,
+        message,
+      };
+    } catch (err) {
+      logger.error(`Error submitting RAM password: ${err.message}`);
+      const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
+      return {
+        success: false,
+        loggedIn: false,
+        needsCode: false,
+        needsSlider: false,
+        buffer,
+        message: `输入密码异常: ${err.message}`,
+      };
+    }
+  }
+
+  /**
+   * Step 3: Submit RAM SMS / MFA verification code.
+   * @param {import('playwright-core').Page} page
+   * @param {string} code
+   * @returns {Promise<{ success: boolean, loggedIn: boolean, buffer: Buffer | null, message: string }>}
+   */
+  static async submitRamVerifyCode(page, code) {
+    try {
+      logger.info(`[RAM Login] Entering verification code: "${code}"...`);
+
+      const codeInputSelectors = [
+        'input[placeholder*="验证码"]',
+        'input[placeholder*="动态口令"]',
+        'input[placeholder*="MFA"]',
+        'input[name*="code"]',
+        'input[name*="verify"]',
+        'input[type="number"]',
+        'input[type="text"]',
+      ];
+
+      let codeEl = null;
+      for (const sel of codeInputSelectors) {
+        try {
+          const el = await page.$(sel);
+          if (el && (await el.isVisible())) {
+            codeEl = el;
+            break;
+          }
+        } catch {}
+      }
+
+      if (!codeEl) {
+        const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
+        return { success: false, loggedIn: false, buffer, message: '未能找到验证码输入框。' };
+      }
+
+      await codeEl.click({ timeout: 2000 });
+      await codeEl.fill('');
+      await codeEl.type(code.trim(), { delay: 60 });
+      await this.sleep(400);
+
+      // Find submit button
+      const submitSelectors = [
+        'button:has-text("确定")',
+        'button:has-text("提交")',
+        'button:has-text("验证")',
+        'button:has-text("登录")',
+        'button[type="submit"]',
+        '#btn-submit',
+      ];
+
+      for (const sel of submitSelectors) {
+        try {
+          const btn = await page.$(sel);
+          if (btn && (await btn.isVisible())) {
+            await btn.click({ timeout: 3000 });
+            break;
+          }
+        } catch {}
+      }
+
+      await this.sleep(3500);
+
+      const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
+      const url = page.url();
+      const isSuccess = url.includes('dsw') || url.includes('console.aliyun.com') || url.includes('pai') || (!url.includes('signin.aliyun.com') && !url.includes('login.htm'));
+
+      return {
+        success: true,
+        loggedIn: isSuccess,
+        buffer,
+        message: isSuccess
+          ? '🎉 阿里云 RAM 登录成功！PAI-DSW 实例已完全就绪！'
+          : '验证码已提交，正在等待登录响应。',
+      };
+    } catch (err) {
+      logger.error(`Error submitting RAM verify code: ${err.message}`);
+      const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
+      return { success: false, loggedIn: false, buffer, message: `输入验证码异常: ${err.message}` };
+    }
+  }
+
+  /**
+   * Execute one-shot full RAM sub-account login.
+   * @param {import('playwright-core').Page} page
+   * @param {string} username
+   * @param {string} password
+   * @param {string} [code]
+   */
+  static async executeFullRamLogin(page, username, password, code = '') {
+    const userRes = await this.submitRamUsername(page, username);
+    if (!userRes.success && !userRes.hasPasswordPrompt) {
+      return userRes;
+    }
+    await this.sleep(1000);
+    const passRes = await this.submitRamPassword(page, password);
+    if (code && passRes.needsCode) {
+      await this.sleep(1000);
+      return await this.submitRamVerifyCode(page, code);
+    }
+    return passRes;
   }
 }
 

@@ -161,6 +161,14 @@ export class MessageHandler {
         break;
       }
 
+      case '/ram':
+      case 'ram':
+      case '子账号':
+      case 'ram登录': {
+        await this.handleRamLoginCommand(targetId, args);
+        break;
+      }
+
       case '/login':
       case 'login':
       case '登录':
@@ -374,6 +382,11 @@ export class MessageHandler {
         break;
       }
 
+      case 'ram_refresh': {
+        await this.handleRamRefresh(senderId);
+        break;
+      }
+
       default:
         logger.warn(`Unknown card action: ${action}`);
         break;
@@ -414,25 +427,26 @@ export class MessageHandler {
 
       if (res.success) {
         await this.notifier.sendCard(
-          CardTemplates.buildResultCard('🎉 滑块验证通过', res.message, true),
+          CardTemplates.buildResultCard('滑块验证成功', '🎉 安全验证已通过！正在连接实例...', true),
           targetId
         );
         await this.scheduler.runRound();
       } else {
-        await this.notifier.sendCard(
-          CardTemplates.buildResultCard('⚠️ 滑块验证未通过', res.message, false),
-          targetId
-        );
         if (res.newCaptchaBuffer) {
           await this.notifier.sendCaptchaCard(
             res.newCaptchaBuffer,
             targetId,
-            '已重置新验证码，请点击下方预设或微调按钮重新滑动：'
+            `⚠️ 滑块未对齐或验证失败 (${res.message})，已刷新新验证码，请重新微调：`
+          );
+        } else {
+          await this.notifier.sendCard(
+            CardTemplates.buildResultCard('验证失败', res.message, false),
+            targetId
           );
         }
       }
     } catch (err) {
-      await this.notifier.sendCard(CardTemplates.buildResultCard('释放滑块异常', err.message, false), targetId);
+      await this.notifier.sendCard(CardTemplates.buildResultCard('提交验证异常', err.message, false), targetId);
     }
   }
 
@@ -522,6 +536,214 @@ export class MessageHandler {
         CardTemplates.buildResultCard('查看实例异常', err.message, false),
         targetId
       );
+    }
+  }
+
+  /**
+   * Main router for /ram commands.
+   * @param {string} targetId
+   * @param {string[]} args
+   */
+  async handleRamLoginCommand(targetId, args) {
+    if (!args || args.length === 0) {
+      await this.handleRamRefresh(targetId);
+      return;
+    }
+
+    const sub = args[0].toLowerCase();
+    if (sub === 'user' || sub === 'u' || sub === '账号') {
+      const username = args.slice(1).join(' ');
+      await this.handleRamUser(targetId, username);
+    } else if (sub === 'pass' || sub === 'p' || sub === 'pwd' || sub === '密码') {
+      const password = args.slice(1).join(' ');
+      await this.handleRamPass(targetId, password);
+    } else if (sub === 'code' || sub === 'c' || sub === '验证码') {
+      const code = args.slice(1).join(' ');
+      await this.handleRamCode(targetId, code);
+    } else if (args.length >= 2) {
+      const username = args[0];
+      const password = args[1];
+      const code = args[2] || '';
+      await this.handleFullRamLogin(targetId, username, password, code);
+    } else {
+      // 1 single arg without keyword -> treat as username
+      await this.handleRamUser(targetId, args[0]);
+    }
+  }
+
+  async handleRamUser(targetId, username) {
+    if (!username) {
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard('缺少子账号', '请提供子账号用户名，格式：\n`/ram user <子账号>` 或 `/ram <子账号> <密码>`', false),
+        targetId
+      );
+      return;
+    }
+    try {
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard('正在输入子账号', `正在向阿里云登录页面输入子账号【${username}】并进入下一步...`, true),
+        targetId
+      );
+      const page = await this.browserManager.getAliyunPage();
+      const res = await PageActions.submitRamUsername(page, username);
+      if (res.buffer) {
+        const imgKey = await this.notifier.uploadImage(res.buffer);
+        if (imgKey) {
+          const card = CardTemplates.buildRamLoginStatusCard(
+            imgKey,
+            res.hasPasswordPrompt ? '请输入密码' : '已提交账号',
+            res.message,
+            res.hasPasswordPrompt ? 'blue' : (res.success ? 'turquoise' : 'orange')
+          );
+          await this.notifier.sendCard(card, targetId);
+          return;
+        }
+      }
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard(res.success ? '子账号已输入' : '输入失败', res.message, res.success),
+        targetId
+      );
+    } catch (err) {
+      await this.notifier.sendCard(CardTemplates.buildResultCard('输入子账号异常', err.message, false), targetId);
+    }
+  }
+
+  async handleRamPass(targetId, password) {
+    if (!password) {
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard('缺少密码', '请提供子账号密码，格式：\n`/ram pass <密码>`', false),
+        targetId
+      );
+      return;
+    }
+    try {
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard('正在提交密码', '正在输入密码并点击登录，正在验证身份...', true),
+        targetId
+      );
+      const page = await this.browserManager.getAliyunPage();
+      const res = await PageActions.submitRamPassword(page, password);
+      if (res.buffer) {
+        const imgKey = await this.notifier.uploadImage(res.buffer);
+        if (imgKey) {
+          const card = CardTemplates.buildRamLoginStatusCard(
+            imgKey,
+            res.loggedIn ? '登录成功' : (res.needsCode ? '需二次验证码' : (res.needsSlider ? '需滑动验证' : '登录响应')),
+            res.message,
+            res.loggedIn ? 'blue' : (res.needsCode || res.needsSlider ? 'orange' : (res.success ? 'turquoise' : 'red'))
+          );
+          await this.notifier.sendCard(card, targetId);
+          if (res.loggedIn) {
+            await this.scheduler.runRound();
+          }
+          return;
+        }
+      }
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard(res.loggedIn ? '登录成功' : '登录未完成', res.message, res.loggedIn),
+        targetId
+      );
+    } catch (err) {
+      await this.notifier.sendCard(CardTemplates.buildResultCard('提交密码异常', err.message, false), targetId);
+    }
+  }
+
+  async handleRamCode(targetId, code) {
+    if (!code) {
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard('缺少验证码', '请提供短信或 MFA 验证码，格式：\n`/ram code <验证码>`', false),
+        targetId
+      );
+      return;
+    }
+    try {
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard('正在提交验证码', `正在输入验证码【${code}】并提交...`, true),
+        targetId
+      );
+      const page = await this.browserManager.getAliyunPage();
+      const res = await PageActions.submitRamVerifyCode(page, code);
+      if (res.buffer) {
+        const imgKey = await this.notifier.uploadImage(res.buffer);
+        if (imgKey) {
+          const card = CardTemplates.buildRamLoginStatusCard(
+            imgKey,
+            res.loggedIn ? '登录成功' : '验证码已提交',
+            res.message,
+            res.loggedIn ? 'blue' : (res.success ? 'turquoise' : 'orange')
+          );
+          await this.notifier.sendCard(card, targetId);
+          if (res.loggedIn) {
+            await this.scheduler.runRound();
+          }
+          return;
+        }
+      }
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard(res.loggedIn ? '验证成功' : '验证未完成', res.message, res.loggedIn),
+        targetId
+      );
+    } catch (err) {
+      await this.notifier.sendCard(CardTemplates.buildResultCard('提交验证码异常', err.message, false), targetId);
+    }
+  }
+
+  async handleFullRamLogin(targetId, username, password, code = '') {
+    try {
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard('正在执行 RAM 一键登录', `正在自动输入子账号【${username}】与密码并提交...`, true),
+        targetId
+      );
+      const page = await this.browserManager.getAliyunPage();
+      const res = await PageActions.executeFullRamLogin(page, username, password, code);
+      if (res.buffer) {
+        const imgKey = await this.notifier.uploadImage(res.buffer);
+        if (imgKey) {
+          const card = CardTemplates.buildRamLoginStatusCard(
+            imgKey,
+            res.loggedIn ? '登录成功' : (res.needsCode ? '需验证码' : (res.needsSlider ? '需滑块验证' : '登录进度')),
+            res.message,
+            res.loggedIn ? 'blue' : (res.needsCode || res.needsSlider ? 'orange' : (res.success ? 'turquoise' : 'red'))
+          );
+          await this.notifier.sendCard(card, targetId);
+          if (res.loggedIn) {
+            await this.scheduler.runRound();
+          }
+          return;
+        }
+      }
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard(res.loggedIn ? 'RAM 登录成功' : '登录未完成', res.message, res.loggedIn),
+        targetId
+      );
+    } catch (err) {
+      await this.notifier.sendCard(CardTemplates.buildResultCard('RAM 登录异常', err.message, false), targetId);
+    }
+  }
+
+  async handleRamRefresh(targetId) {
+    try {
+      const page = await this.browserManager.getAliyunPage();
+      const ramRes = await PageActions.switchToRamLogin(page);
+      if (ramRes.buffer) {
+        const imgKey = await this.notifier.uploadImage(ramRes.buffer);
+        if (imgKey) {
+          const card = CardTemplates.buildRamLoginStatusCard(
+            imgKey,
+            '当前登录页面',
+            '已刷新当前阿里云登录状态页面截图：',
+            'blue'
+          );
+          await this.notifier.sendCard(card, targetId);
+          return;
+        }
+      }
+      await this.notifier.sendCard(
+        CardTemplates.buildResultCard('已刷新', '已刷新阿里云页面状态。', true),
+        targetId
+      );
+    } catch (err) {
+      await this.notifier.sendCard(CardTemplates.buildResultCard('刷新异常', err.message, false), targetId);
     }
   }
 }

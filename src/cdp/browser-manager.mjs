@@ -161,6 +161,21 @@ export class BrowserManager {
   }
 
   /**
+   * Get the active Alibaba Cloud (RAM / PAI-DSW) tab.
+   * @returns {Promise<import('playwright-core').Page>}
+   */
+  async getAliyunPage() {
+    await this.ensureConnected();
+    const pages = this.context.pages();
+    for (const p of pages) {
+      if (!p.isClosed() && (p.url().includes('aliyun.com') || p.url().includes('dsw') || p.url().includes('pai'))) {
+        return p;
+      }
+    }
+    return await this.getPrimaryPage();
+  }
+
+  /**
    * Get an isolated background helper page for off-screen canvas rendering.
    * Never brought to front and does not touch workspace DOM.
    * @returns {Promise<import('playwright-core').Page>}
