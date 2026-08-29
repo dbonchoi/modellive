@@ -1199,37 +1199,65 @@ export class PageActions {
   static async switchToRamLogin(page) {
     try {
       logger.info('Checking/Switching to Alibaba Cloud RAM login form...');
-      // 1. Check if already on RAM login form
-      const userInput = await page.$('#user_principal_name, input[name="user_principal_name"], input[placeholder*="企业别名"], input[placeholder*="账号"]');
-      if (userInput && (await userInput.isVisible())) {
-        const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
-        return { success: true, isRamForm: true, buffer };
-      }
 
-      // 2. Look for "RAM登录 >" link / button
+      // 1. Check if "RAM登录" link/button exists on the page
       const ramSelectors = [
         'a:has-text("RAM登录")',
         'span:has-text("RAM登录")',
         'div:has-text("RAM登录")',
-        '[class*="ram"]',
+        'p:has-text("RAM登录")',
         'a[href*="ram"]',
+        '[class*="ram"]',
+        'a:has-text("RAM")',
       ];
 
+      let ramLink = null;
       for (const sel of ramSelectors) {
         try {
           const el = await page.$(sel);
           if (el && (await el.isVisible())) {
-            logger.info(`Found RAM login entry (${sel}), clicking...`);
-            await el.click({ timeout: 3000 });
-            await this.sleep(2500);
+            ramLink = el;
             break;
           }
         } catch {}
       }
 
-      const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
-      const isRam = !!(await page.$('#user_principal_name, input[name="user_principal_name"], input[placeholder*="账号"], input[type="text"]').catch(() => null));
+      // If not found by CSS, evaluate DOM text
+      if (!ramLink) {
+        const handle = await page.evaluateHandle(() => {
+          const els = Array.from(document.querySelectorAll('a, span, div, p, button'));
+          return els.find(el => {
+            const t = (el.innerText || el.textContent || '').trim();
+            return t.includes('RAM') && t.includes('登录');
+          }) || null;
+        }).catch(() => null);
+        if (handle) {
+          const el = handle.asElement();
+          if (el && (await el.isVisible().catch(() => false))) {
+            ramLink = el;
+          }
+        }
+      }
 
+      if (ramLink) {
+        logger.info('Found 【RAM登录 >】 link on login card. Clicking to switch to RAM login mode...');
+        await ramLink.hover().catch(() => {});
+        await page.evaluate(el => el.click(), ramLink).catch(async () => {
+          await ramLink.click({ force: true, timeout: 3000 });
+        });
+        await this.sleep(3000);
+      } else {
+        logger.info('No 【RAM登录 >】 link visible, checking if already on RAM login form...');
+      }
+
+      // 2. Check if we are now on RAM sub-account form
+      const isRam = await page.evaluate(() => {
+        const hasUserPrincipal = !!document.querySelector('#user_principal_name, input[name="user_principal_name"], #username_ims');
+        const text = document.body ? document.body.innerText : '';
+        return hasUserPrincipal || text.includes('RAM 用户') || text.includes('企业别名') || text.includes('返回主账号登录');
+      }).catch(() => false);
+
+      const buffer = await page.screenshot({ fullPage: false, type: 'png' }).catch(() => null);
       return { success: true, isRamForm: isRam, buffer };
     } catch (err) {
       logger.warn(`Failed to switch to RAM login: ${err.message}`);
