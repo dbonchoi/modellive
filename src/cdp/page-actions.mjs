@@ -418,9 +418,26 @@ export class PageActions {
         return await page.screenshot({ fullPage: false, type: 'png' });
       });
 
+      // Get exact slider metrics to calibrate visual ruler precisely
+      const { sliderBtn, sliderTrack } = await this.findSliderElements(page);
+      let trackWidth = 260;
+      let btnWidth = 40;
+      let startOffset = 0;
+
+      if (sliderBtn) {
+        const btnBox = await sliderBtn.boundingBox();
+        if (btnBox) btnWidth = btnBox.width;
+      }
+      if (sliderTrack) {
+        const trackBox = await sliderTrack.boundingBox();
+        if (trackBox && trackBox.width > btnWidth) {
+          trackWidth = trackBox.width - btnWidth;
+        }
+      }
+
       let buffer = rawBuffer;
       if (buffer) {
-        buffer = await this.addVisualRuler(page, buffer);
+        buffer = await this.addVisualRuler(page, buffer, { trackWidth, btnWidth, startOffset });
       }
 
       return { visible: true, buffer, rawBuffer };
@@ -431,21 +448,38 @@ export class PageActions {
   }
 
   /**
-   * Draw vertical guide grid lines and percentage ruler bar onto captcha image.
+   * Draw vertical guide grid lines and calibrated percentage ruler bar onto captcha image.
+   * Uses isolated evaluation context to prevent any DOM or focus disturbance in the active page.
    * @param {import('playwright-core').Page} page
    * @param {Buffer} imageBuffer
+   * @param {object} [metrics={}]
    * @returns {Promise<Buffer>}
    */
-  static async addVisualRuler(page, imageBuffer) {
+  static async addVisualRuler(page, imageBuffer, metrics = {}) {
     try {
       const base64 = imageBuffer.toString('base64');
-      const rulerBase64 = await page.evaluate(async (b64) => {
+      const trackWidth = metrics.trackWidth || 260;
+      const btnWidth = metrics.btnWidth || 40;
+      const startOffset = metrics.startOffset || 0;
+
+      // Find an isolated page in the context (like about:blank) to avoid running evaluate on the live dragging page
+      const context = page.context ? page.context() : null;
+      let evalPage = page;
+      if (context) {
+        const pages = context.pages();
+        const blankPage = pages.find(p => p.url() === 'about:blank');
+        if (blankPage && !blankPage.isClosed()) {
+          evalPage = blankPage;
+        }
+      }
+
+      const rulerBase64 = await evalPage.evaluate(async ({ b64, trackWidth, btnWidth, startOffset }) => {
         return new Promise((resolve) => {
           const img = new Image();
           img.onload = () => {
             const canvas = document.createElement('canvas');
             canvas.width = img.width;
-            canvas.height = img.height + 42;
+            canvas.height = img.height + 46;
             const ctx = canvas.getContext('2d');
 
             // 1. Draw base image
@@ -454,25 +488,31 @@ export class PageActions {
             const totalW = img.width;
             const totalH = img.height;
 
-            // 2. Draw vertical dashed reference grid lines across the image
-            for (let p = 10; p <= 90; p += 10) {
-              const x = Math.round((totalW * p) / 100);
-              ctx.strokeStyle = (p % 20 === 0) ? 'rgba(0, 240, 255, 0.45)' : 'rgba(255, 230, 0, 0.35)';
-              ctx.lineWidth = (p % 20 === 0) ? 2 : 1;
-              ctx.setLineDash([5, 4]);
-              ctx.beginPath();
-              ctx.moveTo(x, 0);
-              ctx.lineTo(x, totalH);
-              ctx.stroke();
+            // Maximum draggable distance corresponding to 100%
+            const effMaxX = Math.min(totalW, Math.max(80, trackWidth));
+
+            // 2. Draw vertical reference dashed grid lines calibrated to the exact slider travel
+            for (let p = 10; p <= 100; p += 10) {
+              const x = startOffset + Math.round((effMaxX * p) / 100);
+              if (x <= totalW) {
+                const isMajor = p % 20 === 0 || p === 100;
+                ctx.strokeStyle = (p === 100) ? 'rgba(0, 240, 255, 0.85)' : (isMajor ? 'rgba(0, 240, 255, 0.45)' : 'rgba(255, 230, 0, 0.35)');
+                ctx.lineWidth = isMajor ? 2 : 1;
+                ctx.setLineDash([5, 4]);
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, totalH);
+                ctx.stroke();
+              }
             }
-            ctx.setLineDash([]); // Reset line dash
+            ctx.setLineDash([]);
 
             // 3. Draw Ruler bottom bar
-            ctx.fillStyle = '#181825';
-            ctx.fillRect(0, totalH, totalW, 42);
+            ctx.fillStyle = '#111827';
+            ctx.fillRect(0, totalH, totalW, 46);
 
             // Divider line
-            ctx.strokeStyle = '#585b70';
+            ctx.strokeStyle = '#374151';
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.moveTo(0, totalH);
@@ -480,26 +520,31 @@ export class PageActions {
             ctx.stroke();
 
             // 4. Draw ruler scale ticks and percentage text labels
-            ctx.font = 'bold 12px "Segoe UI", Arial, sans-serif';
+            ctx.font = 'bold 11px "Segoe UI", Arial, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
 
             for (let p = 0; p <= 100; p += 10) {
-              const x = Math.round((totalW * p) / 100);
-              const isMajor = p % 20 === 0;
+              const x = startOffset + Math.round((effMaxX * p) / 100);
+              if (x <= totalW) {
+                const isMajor = p % 20 === 0 || p === 100;
+                ctx.strokeStyle = isMajor ? '#38bdf8' : '#fbbf24';
+                ctx.lineWidth = isMajor ? 2 : 1;
+                ctx.beginPath();
+                ctx.moveTo(x, totalH);
+                ctx.lineTo(x, totalH + (isMajor ? 12 : 7));
+                ctx.stroke();
 
-              // Tick mark
-              ctx.strokeStyle = isMajor ? '#89dceb' : '#f9e2af';
-              ctx.lineWidth = isMajor ? 2 : 1;
-              ctx.beginPath();
-              ctx.moveTo(x, totalH);
-              ctx.lineTo(x, totalH + (isMajor ? 12 : 7));
-              ctx.stroke();
+                ctx.fillStyle = isMajor ? '#38bdf8' : '#fbbf24';
+                const textX = (p === 0) ? x + 12 : ((x > totalW - 16) ? totalW - 16 : x);
+                ctx.fillText(`${p}%`, textX, totalH + 26);
+              }
+            }
 
-              // Percentage text
-              ctx.fillStyle = (p === 0 || p === 100) ? '#a6adc8' : (isMajor ? '#89dceb' : '#f9e2af');
-              const textX = p === 0 ? x + 16 : (p === 100 ? x - 18 : x);
-              ctx.fillText(`${p}%`, textX, totalH + 25);
+            // Mark unreachable piece-width zone at right edge if any
+            if (effMaxX < totalW - 5) {
+              ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+              ctx.fillRect(effMaxX, 0, totalW - effMaxX, totalH);
             }
 
             resolve(canvas.toDataURL('image/png').split(',')[1]);
@@ -507,7 +552,7 @@ export class PageActions {
           img.onerror = () => resolve(b64);
           img.src = 'data:image/png;base64,' + b64;
         });
-      }, base64);
+      }, { b64: base64, trackWidth, btnWidth, startOffset });
 
       if (rulerBase64) {
         return Buffer.from(rulerBase64, 'base64');
@@ -642,7 +687,6 @@ export class PageActions {
   static async dragAndHold(page, targetPercent = 50) {
     try {
       logger.info(`[Captcha Drag] Dragging to ${targetPercent.toFixed(1)}% and HOLDING for user confirmation...`);
-      await page.bringToFront().catch(() => {});
 
       if (!this.dragSession.active) {
         const { sliderBtn, sliderTrack } = await this.findSliderElements(page);

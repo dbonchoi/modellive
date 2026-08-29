@@ -149,6 +149,11 @@ export class BrowserManager {
   async getPrimaryPage() {
     await this.ensureConnected();
     const pages = this.context.pages();
+    for (const p of pages) {
+      if (!p.isClosed() && p.url().includes('modelscope.cn')) {
+        return p;
+      }
+    }
     if (pages.length > 0 && !pages[0].isClosed()) {
       return pages[0];
     }
@@ -156,9 +161,28 @@ export class BrowserManager {
   }
 
   /**
+   * Get an isolated background helper page for off-screen canvas rendering.
+   * Never brought to front and does not touch workspace DOM.
+   * @returns {Promise<import('playwright-core').Page>}
+   */
+  async getWorkerPage() {
+    await this.ensureConnected();
+    if (this.workerPage && !this.workerPage.isClosed()) {
+      return this.workerPage;
+    }
+    this.workerPage = await this.context.newPage();
+    await this.workerPage.goto('about:blank').catch(() => {});
+    return this.workerPage;
+  }
+
+  /**
    * Disconnect from browser CDP session.
    */
   async disconnect() {
+    if (this.workerPage && !this.workerPage.isClosed()) {
+      await this.workerPage.close().catch(() => {});
+      this.workerPage = null;
+    }
     if (this.browser && this.isConnected) {
       try {
         await this.browser.close();
