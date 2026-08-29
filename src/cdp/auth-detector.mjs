@@ -183,10 +183,31 @@ export class AuthDetector {
             // continue
           }
         }
+      } else if (selectedProvider === 'aliyun' || selectedProvider === 'ram') {
+        logger.info(`Navigating to Alibaba Cloud ${selectedProvider.toUpperCase()} login page...`);
+        await page.goto('https://signin.aliyun.com/login.htm', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.waitForTimeout(2500);
+
+        if (selectedProvider === 'ram') {
+          const ramLink = await page.$('a:has-text("RAM登录"), span:has-text("RAM登录"), div:has-text("RAM登录")');
+          if (ramLink && (await ramLink.isVisible())) {
+            await ramLink.click();
+            await page.waitForTimeout(2000);
+          }
+        }
       }
 
-      // Look for QR code elements on the current page (ModelScope, CSDN passport, WeChat QR, etc.)
+      // Look for QR code elements on the current page (ModelScope, Alibaba Cloud, CSDN, WeChat QR, etc.)
       const qrSelectors = [
+        // Alibaba Cloud specific login / QR containers
+        '#alibaba-login-box',
+        '.login-content',
+        '.login-form',
+        '.login-main',
+        'div[class*="login-box"]',
+        'div[class*="content-layout"]',
+        '#login',
+        '#login_frame',
         // CSDN specific QR code containers
         '.main-code img',
         '.main-code canvas',

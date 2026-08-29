@@ -128,17 +128,22 @@ export class CardTemplates {
    * Build Login QR Code Card
    */
   static buildLoginQrCard(imageKey, provider = 'csdn', tip = '请使用手机长按或扫码登录') {
-    const providerName = provider === 'csdn' ? 'CSDN 扫码登录' : (provider === 'github' ? 'GitHub 登录' : 'ModelScope 账号登录');
+    let providerName = 'ModelScope 账号登录';
+    if (provider === 'csdn') providerName = 'CSDN 扫码登录';
+    else if (provider === 'github') providerName = 'GitHub 登录';
+    else if (provider === 'aliyun') providerName = '阿里云扫码登录';
+    else if (provider === 'ram') providerName = '阿里云 RAM 登录';
+
     return {
       config: { wide_screen_mode: true },
       header: {
-        title: { tag: 'plain_text', content: `📱 ModelScope 登录 [${providerName}]` },
+        title: { tag: 'plain_text', content: `📱 ${providerName}` },
         template: 'blue',
       },
       elements: [
         {
           tag: 'div',
-          text: { tag: 'lark_md', content: `**当前方式**：**${providerName}**\n**提示**：${tip}\n扫码授权后，系统将自动检测登录状态并同步会话继续保活。` },
+          text: { tag: 'lark_md', content: `**当前方式**：**${providerName}**\n**提示**：${tip}\n完成扫码或授权后，会话凭证将自动永久保存在本地电脑 Profile 中，实现长效保活。` },
         },
         {
           tag: 'img',
@@ -152,9 +157,15 @@ export class CardTemplates {
           actions: [
             {
               tag: 'button',
-              text: { tag: 'plain_text', content: '✅ 我已完成扫码' },
+              text: { tag: 'plain_text', content: '✅ 我已完成登录' },
               type: 'primary',
               value: { action: 'confirm_login' },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '☁️ 阿里云/RAM' },
+              type: 'default',
+              value: { action: 'trigger_login', provider: 'ram' },
             },
             {
               tag: 'button',
@@ -164,15 +175,9 @@ export class CardTemplates {
             },
             {
               tag: 'button',
-              text: { tag: 'plain_text', content: '🐙 GitHub 登录' },
+              text: { tag: 'plain_text', content: '🐙 GitHub' },
               type: 'default',
               value: { action: 'trigger_login', provider: 'github' },
-            },
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '📱 账号/短信' },
-              type: 'default',
-              value: { action: 'trigger_login', provider: 'default' },
             },
           ],
         },
