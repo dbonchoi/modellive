@@ -1016,57 +1016,87 @@ export class PageActions {
           needsLogin: false,
           targetUrl: page.url(),
           buffer: null,
-          message: '未在页面顶部找到【实例运行中】按钮，可能实例尚未启动。',
+          message: '未在页面顶部找到【实例运行中】按钮，请确认工作空间实例处于运行状态。',
         };
       }
 
-      // 2. Click "实例运行中" to open dropdown menu
-      logger.info('Clicking 【实例运行中】 button to open dropdown menu...');
-      await page.evaluate(el => el.click(), statusBtn).catch(async () => {
-        await statusBtn.click({ timeout: 3000 });
-      });
+      const box = await statusBtn.boundingBox();
+      const centerX = box ? (box.x + box.width / 2) : 0;
+      const centerY = box ? (box.y + box.height / 2) : 0;
+
+      // 2. Hover mouse over "实例运行中" and click to trigger Ant Design Dropdown/Popover
+      logger.info(`Hovering and clicking 【实例运行中】 button at (${centerX.toFixed(1)}, ${centerY.toFixed(1)})...`);
+      if (box) {
+        await page.mouse.move(centerX, centerY);
+        await this.sleep(200);
+      }
+      await statusBtn.hover().catch(() => {});
+      await page.evaluate((el) => {
+        el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+        el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      }, statusBtn).catch(() => {});
+      await this.sleep(300);
+
+      // Also click the button in case it uses click trigger
+      await statusBtn.click({ timeout: 2000 }).catch(() => {});
       await this.sleep(800);
 
-      // 3. Find the "查看实例" dropdown item
+      // 3. Find the "查看实例" dropdown item (poll for up to 3.5s)
       const viewInstanceSelectors = [
         'div:has-text("查看实例")',
         'span:has-text("查看实例")',
         'li:has-text("查看实例")',
         'a:has-text("查看实例")',
+        '.ant-dropdown-menu-item:has-text("查看实例")',
+        '.ant-dropdown :has-text("查看实例")',
+        '.ant-popover :has-text("查看实例")',
         '[class*="menu"]:has-text("查看实例")',
         '[class*="dropdown"]:has-text("查看实例")',
       ];
 
       let viewItem = null;
-      for (const sel of viewInstanceSelectors) {
-        try {
-          const el = await page.$(sel);
-          if (el && (await el.isVisible())) {
-            viewItem = el;
-            break;
-          }
-        } catch {}
+      const startWait = Date.now();
+      while (Date.now() - startWait < 3500) {
+        for (const sel of viewInstanceSelectors) {
+          try {
+            const els = await page.$$(sel);
+            for (const el of els) {
+              if (await el.isVisible()) {
+                viewItem = el;
+                break;
+              }
+            }
+            if (viewItem) break;
+          } catch {}
+        }
+        if (viewItem) break;
+        // If not appeared, re-hover
+        if (box) {
+          await page.mouse.move(centerX, centerY);
+        }
+        await this.sleep(400);
       }
 
       if (!viewItem) {
+        logger.warn('Could not find 【查看实例】 in dropdown menu.');
         return {
           success: false,
           needsLogin: false,
           targetUrl: page.url(),
           buffer: null,
-          message: '未在下拉菜单中找到【查看实例】选项。',
+          message: '未能唤出或找到【查看实例】菜单项，请检查电脑端页面是否处于前台。',
         };
       }
 
-      // 4. Click "查看实例" and listen for newly opened tab
-      logger.info('Clicking 【查看实例】 menu item...');
+      // 4. Hover & Click "查看实例" and listen for newly opened tab
+      logger.info('Found 【查看实例】 menu item, clicking to open PAI-DSW tab...');
       const context = page.context();
       let targetPage = null;
 
       const [popup] = await Promise.all([
-        context.waitForEvent('page', { timeout: 8000 }).catch(() => null),
-        page.evaluate(el => el.click(), viewItem).catch(async () => {
-          await viewItem.click({ timeout: 3000 });
+        context.waitForEvent('page', { timeout: 10000 }).catch(() => null),
+        viewItem.click({ force: true, timeout: 5000 }).catch(async () => {
+          await page.evaluate(el => el.click(), viewItem);
         }),
       ]);
 
