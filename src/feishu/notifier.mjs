@@ -144,6 +144,18 @@ export class FeishuNotifier {
   }
 
   /**
+   * Send Slider Holding Preview Card with micro-adjustment and confirm release buttons.
+   */
+  async sendSliderHoldingCard(imageBuffer, currentPercent, receiveId = null) {
+    const imageKey = await this.uploadImage(imageBuffer);
+    if (!imageKey) {
+      return await this.sendAlert('滑块落点预览', `滑块已移动至 ${currentPercent}% (按住中)，请在飞书确认释放。`);
+    }
+    const card = CardTemplates.buildSliderHoldingCard(imageKey, currentPercent, this.h5Url || '');
+    return await this.sendCard(card, receiveId);
+  }
+
+  /**
    * Send an image card with custom title and message.
    */
   async sendImageCard(imageBuffer, title, message, receiveId = null, color = 'blue') {

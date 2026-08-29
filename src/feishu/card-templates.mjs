@@ -270,6 +270,112 @@ export class CardTemplates {
   }
 
   /**
+   * Build Slider Holding & Fine-Tuning Card (Slide and hold for user confirmation before release).
+   * @param {string} imageKey
+   * @param {number} currentPercent
+   * @param {string} [h5Url='']
+   */
+  static buildSliderHoldingCard(imageKey, currentPercent, h5Url = '') {
+    const elements = [
+      {
+        tag: 'div',
+        text: {
+          tag: 'lark_md',
+          content: `**滑块已移动至**: **\`${currentPercent.toFixed(1)}%\`** (电脑端当前处于【**按住未放开**】状态 🔒)\n\n📸 **上图为当前实时落点预览**：\n• 若缺口**未完全对齐**，请点击下方【微调按键】继续移动；\n• 若已**严丝合缝对齐**，请点击【✅ 确认对齐，放开滑块提交】完成验证！`,
+        },
+      },
+      {
+        tag: 'img',
+        img_key: imageKey,
+        alt: { tag: 'plain_text', content: 'Current Holding Slider Position' },
+        mode: 'fit_horizontal',
+      },
+      { tag: 'hr' },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '◀ -2%' },
+            type: 'default',
+            value: { action: 'slider_adjust', delta: -2 },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '◀ -1%' },
+            type: 'default',
+            value: { action: 'slider_adjust', delta: -1 },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '◀ -0.5%' },
+            type: 'default',
+            value: { action: 'slider_adjust', delta: -0.5 },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '+0.5% ▶' },
+            type: 'default',
+            value: { action: 'slider_adjust', delta: 0.5 },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '+1% ▶' },
+            type: 'default',
+            value: { action: 'slider_adjust', delta: 1 },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '+2% ▶' },
+            type: 'default',
+            value: { action: 'slider_adjust', delta: 2 },
+          },
+        ],
+      },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: `✅ 确认对齐，放开滑块提交 (${currentPercent.toFixed(1)}%)` },
+            type: 'primary',
+            value: { action: 'slider_release' },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '❌ 取消并重置' },
+            type: 'danger',
+            value: { action: 'slider_cancel' },
+          },
+        ],
+      },
+    ];
+
+    if (h5Url) {
+      elements.push({
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '📱 手机大按钮按键面板' },
+            type: 'default',
+            url: h5Url,
+          },
+        ],
+      });
+    }
+
+    return {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { tag: 'plain_text', content: `🎯 滑块落点预览: ${currentPercent.toFixed(1)}% (按住中)` },
+        template: 'turquoise',
+      },
+      elements,
+    };
+  }
+
+  /**
    * Build Help Card
    */
   static buildHelpCard() {

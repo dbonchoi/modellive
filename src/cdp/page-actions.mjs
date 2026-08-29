@@ -623,106 +623,171 @@ export class PageActions {
     return { frame: null, sliderBtn: null, sliderTrack: null };
   }
 
+  static dragSession = {
+    active: false,
+    startX: 0,
+    startY: 0,
+    currentX: 0,
+    currentPercent: 0,
+    trackWidth: 260,
+  };
+
   /**
-   * Execute human-like slider drag on the captcha modal.
+   * Drag slider to target percentage and HOLD (do not mouse.up).
+   * Returns screenshot of the held position for user visual confirmation.
    * @param {import('playwright-core').Page} page
    * @param {number} targetPercent (0 - 100)
-   * @returns {Promise<{ success: boolean, message: string, newCaptchaBuffer?: Buffer }>}
+   * @returns {Promise<{ success: boolean, holding: boolean, percent: number, buffer?: Buffer, message?: string }>}
    */
-  static async executeSlideDrag(page, targetPercent = 50) {
+  static async dragAndHold(page, targetPercent = 50) {
     try {
-      logger.info(`Simulating human slider drag to ${targetPercent}%...`);
+      logger.info(`[Captcha Drag] Dragging to ${targetPercent.toFixed(1)}% and HOLDING for user confirmation...`);
       await page.bringToFront().catch(() => {});
 
-      const { sliderBtn, sliderTrack } = await this.findSliderElements(page);
-
-      if (!sliderBtn) {
-        logger.warn('Could not locate slider drag handle (#nc_1_n1z / .btn_slide).');
-        return { success: false, message: '未能定位到滑块拖动按钮，请在电脑端操作。' };
-      }
-
-      const btnBox = await sliderBtn.boundingBox();
-      if (!btnBox) {
-        return { success: false, message: '无法获取滑块按钮坐标。' };
-      }
-
-      let trackWidth = 260; // standard fallback
-      if (sliderTrack) {
-        const trackBox = await sliderTrack.boundingBox();
-        if (trackBox && trackBox.width > btnBox.width) {
-          trackWidth = trackBox.width - btnBox.width;
+      if (!this.dragSession.active) {
+        const { sliderBtn, sliderTrack } = await this.findSliderElements(page);
+        if (!sliderBtn) {
+          logger.warn('Could not locate slider drag handle (#nc_1_n1z / .btn_slide).');
+          return { success: false, holding: false, percent: targetPercent, message: '未能定位到滑块按钮，请在电脑端操作。' };
         }
+
+        const btnBox = await sliderBtn.boundingBox();
+        if (!btnBox) {
+          return { success: false, holding: false, percent: targetPercent, message: '无法获取滑块按钮坐标。' };
+        }
+
+        let trackWidth = 260;
+        if (sliderTrack) {
+          const trackBox = await sliderTrack.boundingBox();
+          if (trackBox && trackBox.width > btnBox.width) {
+            trackWidth = trackBox.width - btnBox.width;
+          }
+        }
+
+        const startX = btnBox.x + btnBox.width / 2;
+        const startY = btnBox.y + btnBox.height / 2;
+
+        await page.mouse.move(startX, startY);
+        await this.sleep(80);
+        await page.mouse.down();
+        await this.sleep(100);
+
+        this.dragSession = {
+          active: true,
+          startX,
+          startY,
+          currentX: startX,
+          currentPercent: 0,
+          trackWidth,
+        };
       }
 
-      // Linear 1:1 mapping: 0% = start of track, 100% = end of track
+      // Calculate target X from track width and percentage
       const ratio = Math.max(0, Math.min(100, targetPercent)) / 100;
-      const dragDistance = Math.round(trackWidth * ratio);
+      const targetX = this.dragSession.startX + Math.round(this.dragSession.trackWidth * ratio);
+      const fromX = this.dragSession.currentX;
+      const distance = targetX - fromX;
 
-      const startX = btnBox.x + btnBox.width / 2;
-      const startY = btnBox.y + btnBox.height / 2;
-      const targetX = startX + dragDistance;
-
-      logger.info(`[Captcha Drag] Target=${targetPercent}%, Distance=${dragDistance}px (TrackWidth=${trackWidth.toFixed(0)}px), Start=(${startX.toFixed(1)}, ${startY.toFixed(1)}) -> Target=(${targetX.toFixed(1)}, ${startY.toFixed(1)})`);
-
-      // 1. Move to handle center
-      await page.mouse.move(startX, startY);
-      await this.sleep(80);
-
-      // 2. Mouse down
-      await page.mouse.down();
-      await this.sleep(100);
-
-      // 3. Multi-step human-like smooth movement (ease-out curve with small organic Y jitter)
-      const steps = 35;
+      const steps = Math.max(12, Math.min(35, Math.round(Math.abs(distance) / 6)));
       for (let i = 1; i <= steps; i++) {
         const progress = i / steps;
         const ease = 1 - Math.pow(1 - progress, 3);
-        const currX = startX + dragDistance * ease;
-        const jitterY = startY + (Math.sin(progress * Math.PI) * (Math.random() * 3 - 1.5));
+        const currX = fromX + distance * ease;
+        const jitterY = this.dragSession.startY + (Math.sin(progress * Math.PI) * (Math.random() * 2 - 1));
         await page.mouse.move(currX, jitterY);
-        await this.sleep(12 + Math.floor(Math.random() * 10));
+        await this.sleep(10 + Math.floor(Math.random() * 8));
       }
 
-      // 4. Slight micro-correction and hover at end position
-      await page.mouse.move(targetX, startY);
-      await this.sleep(150);
+      await page.mouse.move(targetX, this.dragSession.startY);
+      await this.sleep(200);
 
-      // Capture screenshot of actual dragged state in Chrome right before release
-      let postDragBuffer = null;
-      try {
-        const postCap = await this.checkAndCaptureCaptcha(page);
-        postDragBuffer = postCap.buffer || postCap.rawBuffer;
-      } catch (e) {
-        logger.warn(`Failed to capture post-drag screenshot: ${e.message}`);
-      }
+      this.dragSession.currentX = targetX;
+      this.dragSession.currentPercent = targetPercent;
 
-      // 5. Mouse up
-      await page.mouse.up();
-      logger.success(`Slider drag completed (${dragDistance}px). Waiting for verification result...`);
+      logger.info(`[Captcha Drag] Held at ${targetPercent.toFixed(1)}% (${targetX.toFixed(1)}px). Capturing held screenshot...`);
+
+      const cap = await this.checkAndCaptureCaptcha(page);
+      return {
+        success: true,
+        holding: true,
+        percent: targetPercent,
+        buffer: cap.buffer || cap.rawBuffer,
+      };
+    } catch (err) {
+      logger.error(`Error in dragAndHold: ${err.message}`);
+      return { success: false, holding: false, percent: targetPercent, message: err.message };
+    }
+  }
+
+  /**
+   * Release the currently held slider button to commit verification.
+   * @param {import('playwright-core').Page} page
+   * @returns {Promise<{ success: boolean, message: string, newCaptchaBuffer?: Buffer }>}
+   */
+  static async releaseSlider(page) {
+    try {
+      logger.info('[Captcha Drag] User confirmed release! Releasing slider in Chrome (mouse.up)...');
+      await page.mouse.up().catch(() => {});
+      this.dragSession.active = false;
+
+      logger.success('Slider released. Waiting for verification result...');
       await this.sleep(2500);
 
-      // 6. Check if verification passed
       const recheck = await this.checkAndCaptureCaptcha(page);
       if (!recheck.visible) {
         logger.success('Captcha verification passed successfully!');
         return {
           success: true,
           message: '🎉 滑块验证通过！实例正在继续连接运行...',
-          postDragBuffer,
         };
       } else {
-        logger.warn('Captcha still visible after drag; verification failed or position needs adjustment.');
+        logger.warn('Captcha still visible after release; verification failed or position needs adjustment.');
         return {
           success: false,
-          message: '滑块验证未通过，请参考实际滑动落点微调后重试。',
-          postDragBuffer,
+          message: '滑块验证未通过，请重新调整百分比。',
           newCaptchaBuffer: recheck.buffer,
         };
       }
     } catch (err) {
-      logger.error(`Error during slider drag: ${err.message}`);
-      return { success: false, message: `滑动执行异常: ${err.message}` };
+      logger.error(`Error in releaseSlider: ${err.message}`);
+      this.dragSession.active = false;
+      return { success: false, message: `释放滑块异常: ${err.message}` };
     }
+  }
+
+  /**
+   * Cancel active drag and reset/refresh captcha.
+   * @param {import('playwright-core').Page} page
+   */
+  static async cancelDrag(page) {
+    try {
+      if (this.dragSession.active) {
+        await page.mouse.up().catch(() => {});
+        this.dragSession.active = false;
+      }
+      return await this.refreshCaptcha(page);
+    } catch (err) {
+      this.dragSession.active = false;
+      return { buffer: null };
+    }
+  }
+
+  /**
+   * Execute one-shot human-like slider drag and release (compatibility helper).
+   * @param {import('playwright-core').Page} page
+   * @param {number} targetPercent (0 - 100)
+   * @returns {Promise<{ success: boolean, message: string, postDragBuffer?: Buffer, newCaptchaBuffer?: Buffer }>}
+   */
+  static async executeSlideDrag(page, targetPercent = 50) {
+    const holdRes = await this.dragAndHold(page, targetPercent);
+    const postDragBuffer = holdRes.buffer || null;
+    const releaseRes = await this.releaseSlider(page);
+    return {
+      success: releaseRes.success,
+      message: releaseRes.message,
+      postDragBuffer,
+      newCaptchaBuffer: releaseRes.newCaptchaBuffer,
+    };
   }
 
   /**

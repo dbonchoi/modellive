@@ -89,6 +89,12 @@ export class H5Server {
             this.handleServeH5(req, res);
           } else if (url.pathname === '/api/captcha-state') {
             await this.handleGetState(req, res);
+          } else if (url.pathname === '/api/drag-hold' && req.method === 'POST') {
+            await this.handleDragHold(req, res);
+          } else if (url.pathname === '/api/release-slide' && req.method === 'POST') {
+            await this.handleReleaseSlide(req, res);
+          } else if (url.pathname === '/api/cancel-drag' && req.method === 'POST') {
+            await this.handleCancelDrag(req, res);
           } else if (url.pathname === '/api/submit-slide' && req.method === 'POST') {
             await this.handleSubmitSlide(req, res);
           } else if (url.pathname === '/api/refresh-captcha' && req.method === 'POST') {
@@ -114,7 +120,7 @@ export class H5Server {
 
       this.server.listen(this.port, '0.0.0.0', () => {
         const h5Url = this.getUrl();
-        logger.success(`[H5Server] Mobile Big-Button Controller listening on ${h5Url}`);
+        logger.success(`[H5Server] Interactive Hold-and-Release Tuner listening on ${h5Url}`);
         resolve(true);
       });
 
@@ -275,8 +281,112 @@ export class H5Server {
       res.end(JSON.stringify({
         active,
         isRunning,
+        isHolding: PageActions.dragSession.active,
+        heldPercent: PageActions.dragSession.currentPercent || this.lastPercent,
         imageBase64: base64,
         lastPercent: this.lastPercent,
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
+  /**
+   * Handle drag and HOLD without releasing.
+   */
+  async handleDragHold(req, res) {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const data = JSON.parse(body || '{}');
+        const percent = Math.max(0, Math.min(100, Number(data.percent) || 45));
+        this.lastPercent = percent;
+
+        const page = await this.browserManager.getPrimaryPage();
+        const holdRes = await PageActions.dragAndHold(page, percent);
+
+        let imageBase64 = null;
+        if (holdRes.buffer) {
+          this.currentCaptchaBuffer = holdRes.buffer;
+          imageBase64 = holdRes.buffer.toString('base64');
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: holdRes.success,
+          holding: true,
+          percent,
+          message: holdRes.message || '滑块已移至目标位置并处于按住状态，请确认对齐后松开。',
+          imageBase64,
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+  }
+
+  /**
+   * Handle user confirming release of held slider.
+   */
+  async handleReleaseSlide(req, res) {
+    try {
+      const page = await this.browserManager.getPrimaryPage();
+      const resRelease = await PageActions.releaseSlider(page);
+
+      const targetUser = this.notifier?.config?.feishu?.adminUserIds?.[0];
+
+      let newImageBase64 = null;
+      if (resRelease.newCaptchaBuffer) {
+        this.currentCaptchaBuffer = resRelease.newCaptchaBuffer;
+        newImageBase64 = resRelease.newCaptchaBuffer.toString('base64');
+      }
+
+      if (resRelease.success) {
+        this.currentCaptchaBuffer = null;
+        if (this.notifier && this.notifier.enabled) {
+          await this.notifier.sendText(
+            `🎉 电脑端滑块验证成功！ModelScope 实例连接成功，PC 守护进程已自动接管保活！`,
+            targetUser
+          ).catch(() => {});
+        }
+        if (this.scheduler) {
+          this.scheduler.runRound().catch(() => {});
+        }
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: resRelease.success,
+        message: resRelease.message,
+        newImageBase64,
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+  }
+
+  /**
+   * Handle cancel/reset drag.
+   */
+  async handleCancelDrag(req, res) {
+    try {
+      const page = await this.browserManager.getPrimaryPage();
+      const cap = await PageActions.cancelDrag(page);
+      const buf = cap.buffer || cap.rawBuffer;
+      let imageBase64 = null;
+      if (buf) {
+        this.currentCaptchaBuffer = buf;
+        imageBase64 = buf.toString('base64');
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        message: '已释放滑块并刷新验证码',
+        imageBase64,
       }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -367,20 +477,10 @@ export class H5Server {
         if (dragResult.success) {
           this.currentCaptchaBuffer = null;
           if (this.notifier && this.notifier.enabled) {
-            if (dragResult.postDragBuffer) {
-              await this.notifier.sendImageCard(
-                dragResult.postDragBuffer,
-                `✅ 电脑端滑动执行完成 (设定值: ${percent.toFixed(1)}%)`,
-                `🎉 **验证通过**！滑块已准确拖拽到位，ModelScope 实例已成功连接运行！`,
-                targetUser,
-                'green'
-              ).catch(() => {});
-            } else {
-              await this.notifier.sendText(
-                `🎉 电脑端滑动验证通过 (${percent.toFixed(1)}%)！ModelScope 实例连接成功！`,
-                targetUser
-              ).catch(() => {});
-            }
+            await this.notifier.sendText(
+              `🎉 电脑端滑动验证通过 (${percent.toFixed(1)}%)！ModelScope 实例连接成功！`,
+              targetUser
+            ).catch(() => {});
           }
           if (this.scheduler) {
             this.scheduler.runRound().catch(() => {});
@@ -393,17 +493,6 @@ export class H5Server {
             postDragBase64,
           }));
         } else {
-          if (this.notifier && this.notifier.enabled) {
-            const feedbackImg = dragResult.postDragBuffer || dragResult.newCaptchaBuffer;
-            if (feedbackImg) {
-              await this.notifier.sendCaptchaCard(
-                feedbackImg,
-                targetUser,
-                `⚠️ 电脑端已滑动至 **${percent.toFixed(1)}%**，但验证未通过。\n📸 **上图为电脑端实际拖拽落点**，请根据落点微调后在手机 H5 上再次尝试：`
-              ).catch(() => {});
-            }
-          }
-
           let newImage = null;
           if (dragResult.newCaptchaBuffer) {
             this.currentCaptchaBuffer = dragResult.newCaptchaBuffer;
@@ -672,12 +761,16 @@ export class H5Server {
       cursor: pointer;
       box-shadow: 0 0 8px rgba(56, 189, 248, 0.8);
     }
-    .btn-submit {
-      width: 100%;
+    .action-row {
+      display: flex;
+      gap: 10px;
+    }
+    .btn-release {
+      flex: 3;
       height: 50px;
-      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      background: linear-gradient(135deg, #10b981, #059669);
       color: #fff;
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 700;
       border: none;
       border-radius: 12px;
@@ -685,16 +778,29 @@ export class H5Server {
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 8px;
-      box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4);
+      gap: 6px;
+      box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
       transition: all 0.15s;
     }
-    .btn-submit:active {
+    .btn-release:active {
       transform: scale(0.98);
     }
-    .btn-submit.loading {
-      opacity: 0.7;
-      pointer-events: none;
+    .btn-cancel {
+      flex: 1;
+      height: 50px;
+      background: #374151;
+      color: #fca5a5;
+      font-size: 13px;
+      font-weight: 600;
+      border: 1px solid #4b5563;
+      border-radius: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .btn-cancel:active {
+      background: #4b5563;
     }
     .option-card {
       background: rgba(30, 41, 59, 0.6);
@@ -794,7 +900,7 @@ export class H5Server {
 
     <div class="card">
       <div class="card-title">
-        <span>📸 验证码实时图片 (带百分比标尺)</span>
+        <span>📸 验证码实时图片 (滑块按住中 🔒)</span>
         <span style="font-size: 11px; color: #38bdf8;" id="fetchTime">实时同步</span>
       </div>
       <div class="image-container" id="imageContainer">
@@ -805,16 +911,16 @@ export class H5Server {
 
     <div class="card">
       <div class="card-title">
-        <span>🎯 方案 2：轻点按键精准微调</span>
+        <span>🎯 方案 2：轻点按键精准微调（按住不放开）</span>
       </div>
 
       <div class="value-display-bar">
-        <span class="value-label">目标滑动比例</span>
+        <span class="value-label">当前按住位置</span>
         <span class="value-number" id="valDisplay">45.0%</span>
       </div>
 
       <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">
-        ⚡ 快捷预设（看图对准缺口百分比直接点）：
+        ⚡ 快捷预设（点击后滑块在电脑端移动并持续按住）：
       </div>
       <div class="btn-grid">
         <button class="preset-btn" data-val="35">35%</button>
@@ -832,7 +938,7 @@ export class H5Server {
       </div>
 
       <div style="font-size: 11px; color: #94a3b8; margin-top: 6px;">
-        🔍 步进微调按键：
+        🔍 步进微调按键（移动并刷新实时图片）：
       </div>
       <div class="step-grid">
         <button class="step-btn" data-step="-5">-5%</button>
@@ -849,9 +955,14 @@ export class H5Server {
         <span style="font-size: 11px; color: #64748b;">100%</span>
       </div>
 
-      <button class="btn-submit" id="btnSubmit">
-        <span>🚀</span> 立即在电脑端执行滑动 (<span id="btnVal">45.0%</span>)
-      </button>
+      <div class="action-row">
+        <button class="btn-release" id="btnRelease">
+          <span>✅</span> 确认对齐，放开滑块 (<span id="btnVal">45.0%</span>)
+        </button>
+        <button class="btn-cancel" id="btnCancel">
+          重置
+        </button>
+      </div>
 
       <div class="result-box" id="resultBox"></div>
     </div>
@@ -861,13 +972,15 @@ export class H5Server {
 
   <script>
     let currentPercent = 45.0;
+    let isHolding = false;
 
     const captchaImg = document.getElementById('captchaImg');
     const placeholderText = document.getElementById('placeholderText');
     const valDisplay = document.getElementById('valDisplay');
     const btnVal = document.getElementById('btnVal');
     const percentSlider = document.getElementById('percentSlider');
-    const btnSubmit = document.getElementById('btnSubmit');
+    const btnRelease = document.getElementById('btnRelease');
+    const btnCancel = document.getElementById('btnCancel');
     const btnRefresh = document.getElementById('btnRefresh');
     const btnWakeModal = document.getElementById('btnWakeModal');
     const btnCheck = document.getElementById('btnCheck');
@@ -883,7 +996,7 @@ export class H5Server {
       setTimeout(() => toast.classList.remove('show'), duration);
     }
 
-    function setPercent(val) {
+    async function applyPercent(val) {
       currentPercent = Math.max(0, Math.min(100, Math.round(Number(val) * 10) / 10));
       valDisplay.textContent = currentPercent.toFixed(1) + '%';
       btnVal.textContent = currentPercent.toFixed(1) + '%';
@@ -896,23 +1009,39 @@ export class H5Server {
           b.classList.remove('selected');
         }
       });
+
+      // Move and hold in Chrome, then update live image!
+      try {
+        const res = await fetch('/api/drag-hold', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ percent: currentPercent })
+        });
+        const data = await res.json();
+        if (data.imageBase64) {
+          captchaImg.src = 'data:image/png;base64,' + data.imageBase64;
+          captchaImg.style.display = 'block';
+          placeholderText.style.display = 'none';
+          fetchTime.textContent = new Date().toLocaleTimeString();
+        }
+      } catch (e) {}
     }
 
     presetBtns.forEach(b => {
       b.addEventListener('click', () => {
-        setPercent(Number(b.dataset.val));
+        applyPercent(Number(b.dataset.val));
       });
     });
 
     stepBtns.forEach(b => {
       b.addEventListener('click', () => {
         const step = Number(b.dataset.step);
-        setPercent(currentPercent + step);
+        applyPercent(currentPercent + step);
       });
     });
 
-    percentSlider.addEventListener('input', (e) => {
-      setPercent(Number(e.target.value));
+    percentSlider.addEventListener('change', (e) => {
+      applyPercent(Number(e.target.value));
     });
 
     async function loadCaptchaState() {
@@ -989,16 +1118,30 @@ export class H5Server {
       }
     });
 
-    btnSubmit.addEventListener('click', async () => {
-      btnSubmit.classList.add('loading');
-      btnSubmit.textContent = '正在电脑端模拟拖拽 (' + currentPercent.toFixed(1) + '%)...';
+    btnCancel.addEventListener('click', async () => {
+      showToast('正在重置滑块...');
+      try {
+        const res = await fetch('/api/cancel-drag', { method: 'POST' });
+        const data = await res.json();
+        if (data.imageBase64) {
+          captchaImg.src = 'data:image/png;base64,' + data.imageBase64;
+          captchaImg.style.display = 'block';
+        }
+        showToast('已重置');
+      } catch (err) {
+        showToast('重置异常: ' + err.message);
+      }
+    });
+
+    btnRelease.addEventListener('click', async () => {
+      btnRelease.classList.add('loading');
+      btnRelease.textContent = '正在电脑端释放滑块提交 (' + currentPercent.toFixed(1) + '%)...';
       resultBox.style.display = 'none';
 
       try {
-        const res = await fetch('/api/submit-slide', {
+        const res = await fetch('/api/release-slide', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ percent: currentPercent })
         });
         const data = await res.json();
 
@@ -1006,23 +1149,20 @@ export class H5Server {
           resultBox.className = 'result-box success';
           resultBox.textContent = data.message || '🎉 验证通过！ModelScope 实例连接成功！';
           showToast('🎉 验证通过！', 3000);
-          if (data.postDragBase64) {
-            captchaImg.src = 'data:image/png;base64,' + data.postDragBase64;
-          }
         } else {
           resultBox.className = 'result-box error';
-          resultBox.textContent = '⚠️ ' + (data.message || '验证未通过，请参考落点微调后重试。');
-          showToast('验证未通过，请微调后重试');
-          if (data.postDragBase64 || data.newImageBase64) {
-            captchaImg.src = 'data:image/png;base64,' + (data.postDragBase64 || data.newImageBase64);
+          resultBox.textContent = '⚠️ ' + (data.message || '验证未通过，请重新微调后重试。');
+          showToast('验证未通过，请重试');
+          if (data.newImageBase64) {
+            captchaImg.src = 'data:image/png;base64,' + data.newImageBase64;
           }
         }
       } catch (err) {
         resultBox.className = 'result-box error';
-        resultBox.textContent = '滑动请求异常: ' + err.message;
+        resultBox.textContent = '释放滑块异常: ' + err.message;
       } finally {
-        btnSubmit.classList.remove('loading');
-        btnSubmit.innerHTML = '<span>🚀</span> 立即在电脑端执行滑动 (<span id="btnVal">' + currentPercent.toFixed(1) + '%</span>)';
+        btnRelease.classList.remove('loading');
+        btnRelease.innerHTML = '<span>✅</span> 确认对齐，放开滑块 (<span id="btnVal">' + currentPercent.toFixed(1) + '%</span>)';
       }
     });
 

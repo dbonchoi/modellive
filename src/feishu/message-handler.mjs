@@ -125,9 +125,28 @@ export class MessageHandler {
       case 'slide':
       case '滑动':
       case '拖动': {
-        const percent = Number(args[0]) || 50;
+        const percent = Number(args[0]) || 45;
         this.lastSliderPercent = percent;
         await this.handleSlideAction(targetId, percent);
+        break;
+      }
+
+      case '/release':
+      case 'release':
+      case '/confirm':
+      case 'confirm':
+      case '释放':
+      case '松开':
+      case '提交': {
+        await this.handleReleaseAction(targetId);
+        break;
+      }
+
+      case '/cancel':
+      case 'cancel':
+      case '取消':
+      case '重置': {
+        await this.handleCancelAction(targetId);
         break;
       }
 
@@ -246,6 +265,16 @@ export class MessageHandler {
         break;
       }
 
+      case 'slider_release': {
+        await this.handleReleaseAction(senderId);
+        break;
+      }
+
+      case 'slider_cancel': {
+        await this.handleCancelAction(senderId);
+        break;
+      }
+
       case 'captcha_refresh': {
         try {
           const page = await this.browserManager.getPrimaryPage();
@@ -335,48 +364,76 @@ export class MessageHandler {
   }
 
   /**
-   * Handle remote slider drag action.
+   * Handle remote slider drag and hold action.
    * @param {string} targetId
    * @param {number} percent
    */
   async handleSlideAction(targetId, percent) {
     try {
-      await this.notifier.sendCard(
-        CardTemplates.buildResultCard('正在执行滑动', `正在向右模拟拖动滑块至 ${percent}%...`, true),
-        targetId
-      );
-
       const page = await this.browserManager.getPrimaryPage();
-      const res = await PageActions.executeSlideDrag(page, percent);
+      const holdRes = await PageActions.dragAndHold(page, percent);
 
-      if (res.success) {
-        if (res.postDragBuffer) {
-          await this.notifier.sendImageCard(
-            res.postDragBuffer,
-            `✅ 滑块验证成功 (${percent.toFixed(1)}%)`,
-            `🎉 **验证成功**！滑块已准确拖拽到位，正在继续连接实例运行...`,
-            targetId,
-            'green'
-          );
-        } else {
-          await this.notifier.sendCard(CardTemplates.buildResultCard('验证成功', res.message, true), targetId);
-        }
-        // Wait and run round to verify connection
-        await this.scheduler.runRound();
+      if (holdRes.success && holdRes.buffer) {
+        await this.notifier.sendSliderHoldingCard(holdRes.buffer, percent, targetId);
       } else {
-        const feedbackImg = res.postDragBuffer || res.newCaptchaBuffer;
-        if (feedbackImg) {
-          await this.notifier.sendCaptchaCard(
-            feedbackImg,
-            targetId,
-            `⚠️ 电脑端已滑动至 **${percent.toFixed(1)}%**，但验证未通过。\n📸 **上图为电脑端实际拖拽落点**，请根据落点微调后重试：`
-          );
-        } else {
-          await this.notifier.sendCard(CardTemplates.buildResultCard('滑动未完成', res.message, false), targetId);
-        }
+        await this.notifier.sendCard(
+          CardTemplates.buildResultCard('滑动处理异常', holdRes.message || '未能成功按住滑块', false),
+          targetId
+        );
       }
     } catch (err) {
       await this.notifier.sendCard(CardTemplates.buildResultCard('滑动异常', err.message, false), targetId);
+    }
+  }
+
+  /**
+   * Handle user confirmation release of slider.
+   * @param {string} targetId
+   */
+  async handleReleaseAction(targetId) {
+    try {
+      const page = await this.browserManager.getPrimaryPage();
+      const res = await PageActions.releaseSlider(page);
+
+      if (res.success) {
+        await this.notifier.sendCard(
+          CardTemplates.buildResultCard('🎉 滑块验证通过', res.message, true),
+          targetId
+        );
+        await this.scheduler.runRound();
+      } else {
+        await this.notifier.sendCard(
+          CardTemplates.buildResultCard('⚠️ 滑块验证未通过', res.message, false),
+          targetId
+        );
+        if (res.newCaptchaBuffer) {
+          await this.notifier.sendCaptchaCard(
+            res.newCaptchaBuffer,
+            targetId,
+            '已重置新验证码，请点击下方预设或微调按钮重新滑动：'
+          );
+        }
+      }
+    } catch (err) {
+      await this.notifier.sendCard(CardTemplates.buildResultCard('释放滑块异常', err.message, false), targetId);
+    }
+  }
+
+  /**
+   * Handle cancel and reset drag.
+   * @param {string} targetId
+   */
+  async handleCancelAction(targetId) {
+    try {
+      const page = await this.browserManager.getPrimaryPage();
+      const cap = await PageActions.cancelDrag(page);
+      if (cap.buffer) {
+        await this.notifier.sendCaptchaCard(cap.buffer, targetId, '已取消当前滑动并刷新验证码图片');
+      } else {
+        await this.notifier.sendCard(CardTemplates.buildResultCard('已重置', '已释放并重置滑块状态。', true), targetId);
+      }
+    } catch (err) {
+      await this.notifier.sendCard(CardTemplates.buildResultCard('取消操作异常', err.message, false), targetId);
     }
   }
 
